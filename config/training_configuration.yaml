@@ -1,0 +1,32 @@
+dataset:
+  path: ../data/G1a/processed/training_data.mat
+  inputs:
+    - name: x
+      requires_grad: true
+    - name: y
+      requires_grad: true
+    - name: U
+      requires_grad: false
+    - name: V
+      requires_grad: false
+    - name: Ux
+      requires_grad: false
+    - name: Uy
+      requires_grad: false
+    - name: Vx
+      requires_grad: false
+    - name: Vy
+      requires_grad: false
+  outputs:
+    - h
+
+
+initialization:
+  gpu: 0              # GPU card id.
+  seed: 1234          # Random seed.
+  log: true           # Save the training results.
+  lr: 0.00001         # Learning rate, default 1e-5.
+  lu: 0.5             # Regularization factor, default 0.5.
+  scheduler_step: 25  # Scheduler step size. Default 25.
+  total_epochs: 100   # Total running epochs. Default 100.
+  clip_n: 1           # Max frames that will be sampled as a batch.
