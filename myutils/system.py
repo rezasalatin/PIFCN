@@ -2,9 +2,8 @@ import time
 import os
 import shutil
 import numpy as np
-from PIL import Image
-
 import torch
+import random
 
 
 class AvgMeter(object):
@@ -75,3 +74,51 @@ def set_bn_eval(m):
     classname = m.__class__.__name__
     if classname.find('BatchNorm') != -1:
         m.eval()
+
+def initialize_seeds(seed_value=42):
+    """Initialize random seeds to make experiments reproducible."""
+    random.seed(seed_value)  # Python random module.
+    np.random.seed(seed_value)  # Numpy module.
+    torch.manual_seed(seed_value)  # PyTorch for CPU operations.
+    
+    # If you are using CUDA, you should also set the seed for it to ensure reproducibility.
+    torch.cuda.manual_seed(seed_value)
+    torch.cuda.manual_seed_all(seed_value)  # For multiGPU.
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+def setup_logging_and_directories():
+    main_dir = os.path.join('logs', time.strftime('%Y%m%d-%H%M'))
+    log_dir = os.path.join(main_dir, 'log')
+    model_dir = os.path.join(main_dir, 'model')
+
+    for directory in [log_dir, model_dir]:
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+    
+    log_path = os.path.join(log_dir, 'training_log.txt')
+    return main_dir, log_dir, model_dir, log_path
+
+def save_scripts_in_directories(directories, destination_dir):
+    """
+    Copies files from specified directories to a destination directory, preserving the directory structure.
+
+    :param directories: List of directory paths to copy files from.
+    :param destination_dir: Destination directory path where files will be copied.
+    """
+    for dir_path in directories:
+        for root, _, files in os.walk(dir_path):
+            for file in files:
+                # Construct the path to the file to be copied
+                file_path = os.path.join(root, file)
+                # Create a similar directory structure in the destination directory
+                relative_path = os.path.relpath(root, dir_path)
+                destination_path = os.path.join(destination_dir, relative_path)
+                
+                # Ensure the destination directory exists
+                if not os.path.exists(destination_path):
+                    os.makedirs(destination_path)
+                
+                # Copy the file
+                shutil.copy(file_path, destination_path)
+

@@ -6,21 +6,16 @@ from glob import glob
 import torch
 from torch.utils import data
 import torchvision.transforms as TF
+from config.read_yaml import ConfigLoader
 
 
 class Training_dataset(data.Dataset):
 
     def __init__(self, config_path):
-
-        # Reading dataset path from YAML configuration
-        with open(config_path, 'r') as config_file:
-            config = yaml.safe_load(config_file)
-            self.dataset_path = config['dataset']['path']
-            self.output_size = config['dataset']['output_size']
-
-    def __len__(self):
-        # Return the number of files in the dataset
-        return len(self.dataset_files)
+        
+        self.dataset_path = ConfigLoader(config_path, section='dataset', key='path').get_value()
+        self.output_size = ConfigLoader(config_path, section='dataset', key='output_size').get_value()
+        
 
 
     def __getitem__(self, idx):

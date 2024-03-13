@@ -1,5 +1,6 @@
 dataset:
-  path: ../data/G1a/processed/training_data.mat
+  input_path: ./dataset/input_data.mat
+  target_path: ./dataset/target_data.mat
   inputs:
     - name: X
       requires_grad: false
@@ -11,6 +12,7 @@ dataset:
       requires_grad: false
   outputs:
     - h
+  output_size: 256
 
 
 initialization:
@@ -20,5 +22,7 @@ initialization:
   lr: 0.00001         # Learning rate, default 1e-5.
   lu: 0.5             # Regularization factor, default 0.5.
   scheduler_step: 100 # Scheduler step size. Default 25.
-  total_epochs: 500   # Total running epochs. Default 100.
-  clip_n: 3           # Max frames that will be sampled as a batch.
+  total_epochs: 10   # Total running epochs. Default 100.
+  batch_size: 2           # Max frames that will be sampled as a batch.
+
+  data_path: ./data/
