@@ -1,28 +1,22 @@
 dataset:
-  input_path: ./dataset/input_data.mat
-  target_path: ./dataset/target_data.mat
-  inputs:
-    - name: X
-      requires_grad: false
-    - name: Y
-      requires_grad: false
-    - name: U
-      requires_grad: false
-    - name: V
-      requires_grad: false
-  outputs:
-    - h
-  output_size: 256
+  paths:
+    input: ./dataset/input_data.mat
+    target: ./dataset/target_data.mat
+  format:
+    inputs: [X, Y, U, V]  # Input variable names.
+    output: h             # Target variable name.
+  output_size: 256        # Size of the output variable.
 
+training:
+  max_epoch: 1001         # Total number of training epochs.
+  batch_size: 2           # Number of samples per batch.
+  learning_rate: 0.001    # Initial learning rate.
+  regularization: 0.000    # Regularization factor for model training.
+  scheduler:
+    step_size: 200        # Learning rate scheduler step size.
+    gamma: 0.5            # Learning rate decay factor.
 
-initialization:
-  gpu: 0              # GPU card id.
-  seed: 1234          # Random seed.
-  log: true           # Save the training results.
-  lr: 0.00001         # Learning rate, default 1e-5.
-  lu: 0.5             # Regularization factor, default 0.5.
-  scheduler_step: 100 # Scheduler step size. Default 25.
-  total_epochs: 10   # Total running epochs. Default 100.
-  batch_size: 2           # Max frames that will be sampled as a batch.
-
-  data_path: ./data/
+environment:
+  gpu: 0                  # Identifier for the GPU to use.
+  seed: 1234              # Seed for random number generation.
+  logging: True           # Enable logging of training process.

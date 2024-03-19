@@ -1,18 +1,13 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
-from torchvision.models import resnet50
+from torchvision.models import resnet101
 from torch.nn.init import kaiming_normal_
-import myutils
 
 class ResBlock(nn.Module):
     """
-    A residual block that performs two convolutions followed by a residual connection.
-    
-    Parameters:
-    - indim (int): Number of input channels.
-    - outdim (int, optional): Number of output channels. Defaults to indim.
-    - stride (int, optional): Stride for the convolutions. Defaults to 1.
+    A residual block that performs two convolutions followed by a residual connection,
+    using PReLU instead of Leaky ReLU.
     """
     def __init__(self, indim, outdim=None, stride=1):
         super(ResBlock, self).__init__()
@@ -22,8 +17,7 @@ class ResBlock(nn.Module):
         self.bn1 = nn.BatchNorm2d(outdim)
         self.conv2 = nn.Conv2d(outdim, outdim, 3, 1, 1, bias=False)
         self.bn2 = nn.BatchNorm2d(outdim)
-        # LeakyReLU
-        self.leaky_relu = nn.LeakyReLU(negative_slope=0.01)  # Leaky ReLU initialization
+        self.prelu = nn.PReLU()  # PReLU initialization
 
     def _make_downsample(self, indim, outdim, stride):
         if indim != outdim or stride != 1:
@@ -34,25 +28,24 @@ class ResBlock(nn.Module):
 
     def forward(self, x):
         identity = x
-        out = self.leaky_relu(self.bn1(self.conv1(x)))
+        out = self.prelu(self.bn1(self.conv1(x)))
         out = self.bn2(self.conv2(out))
         if self.downsample is not None:
             identity = self.downsample(x)
         out += identity
-        return self.leaky_relu(out)
+        return self.prelu(out)
 
 class Encoder(nn.Module):
     """
-    Encoder module that normalizes input features and processes them through ResNet-50 layers,
-    now using Leaky ReLU instead of ReLU for the initial convolution.
+    Encoder module using PReLU instead of Leaky ReLU for the initial convolution.
     """
     def __init__(self):
         super(Encoder, self).__init__()
-        resnet = resnet50(pretrained=False)
+        resnet = resnet101(pretrained=False)
         self.conv1 = nn.Conv2d(4, 64, kernel_size=7, stride=2, padding=3, bias=False)
-        kaiming_normal_(self.conv1.weight, mode='fan_out', nonlinearity='leaky_relu')  # Adjusted for leaky_relu
+        kaiming_normal_(self.conv1.weight, mode='fan_out', nonlinearity='relu')  # Adjusted for PReLU
         self.bn1 = resnet.bn1
-        self.leaky_relu = nn.LeakyReLU(negative_slope=0.01)  # Leaky ReLU initialization
+        self.prelu = nn.PReLU()  # PReLU initialization
         self.maxpool = resnet.maxpool
         self.res2 = resnet.layer1
         self.res3 = resnet.layer2
@@ -62,8 +55,7 @@ class Encoder(nn.Module):
 
     def forward(self, in_f):
         f = (in_f - self.min_values) / (self.max_values - self.min_values)
-        x = self.maxpool(self.leaky_relu(self.bn1(self.conv1(f))))  # Apply Leaky ReLU
-        # Proceed through ResNet layers
+        x = self.maxpool(self.prelu(self.bn1(self.conv1(f))))  # Apply PReLU
         return self.res4(self.res3(self.res2(x))), self.res3(self.res2(x)), self.res2(x), x
 
 class Refine(nn.Module):
@@ -87,30 +79,28 @@ class Refine(nn.Module):
 
 class Decoder(nn.Module):
     """
-    Decoder module that integrates and refines global and local features to generate output,
-    now using Leaky ReLU instead of ReLU.
+    Decoder module using PReLU instead of Leaky ReLU.
     """
     def __init__(self):
         super(Decoder, self).__init__()
         mdim_global, mdim_local = 256, 32
         self.convFM = nn.Conv2d(1024, mdim_global, 3, 1, 1)
-        kaiming_normal_(self.convFM.weight, mode='fan_out', nonlinearity='leaky_relu')  # Adjust for leaky_relu
+        kaiming_normal_(self.convFM.weight, mode='fan_out', nonlinearity='relu')  # Adjusted for PReLU
         self.ResMM = ResBlock(mdim_global, mdim_global)
         self.RF3 = Refine(512, mdim_global)
         self.RF2 = Refine(256, mdim_global)
         self.pred_global = nn.Conv2d(mdim_global, 1, 3, 1, 1)
         self.convGL = nn.Conv2d(2, 1, 3, 1, 1)
-        kaiming_normal_(self.convGL.weight, mode='fan_out', nonlinearity='leaky_relu')  # Adjust for leaky_relu
+        kaiming_normal_(self.convGL.weight, mode='fan_out', nonlinearity='relu')  # Adjusted for PReLU
         self.local_convFM = nn.Conv2d(64, mdim_local, 3, 1, 1)
         self.local_ResMM = ResBlock(mdim_local, mdim_local)
         self.pred_local = nn.Conv2d(mdim_local, 1, 3, 1, 1)
-        # Leaky ReLU negative slope
-        self.negative_slope = 0.01
+        self.prelu = nn.PReLU()  # PReLU initialization for shared usage
 
     def forward(self, r4, r3, r2, r1, feature_shape):
         bs, _, h, w = feature_shape
-        p_global = F.interpolate(self.pred_global(F.leaky_relu(self.RF2(r2, self.RF3(r3, self.ResMM(self.convFM(r4)))), negative_slope=self.negative_slope)), scale_factor=4, mode='bilinear', align_corners=False)
-        p_local = F.interpolate(self.pred_local(F.leaky_relu(self.local_ResMM(self.local_convFM(r1)), negative_slope=self.negative_slope)), scale_factor=4, mode='bilinear', align_corners=False)
+        p_global = F.interpolate(self.pred_global(self.prelu(self.RF2(r2, self.RF3(r3, self.ResMM(self.convFM(r4)))))), scale_factor=4, mode='bilinear', align_corners=False)
+        p_local = F.interpolate(self.pred_local(self.prelu(self.local_ResMM(self.local_convFM(r1)))), scale_factor=4, mode='bilinear', align_corners=False)
         return self.convGL(torch.cat((p_global, p_local), dim=1))
 
 class AutoEncoder(nn.Module):

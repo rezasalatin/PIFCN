@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from config.read_yaml import ConfigLoader
 #from dataset.DatSet import Training_dataset
-from models.AE_Res50 import AutoEncoder
+from models.AE_Res50_PRELU import AutoEncoder
 from models.physics import continuity_only as res_loss_fn
 import myutils
 
@@ -25,7 +25,7 @@ def get_args():
     return parser.parse_args()
 
 
-def train_model(device, epoch, model, dataloader, fid_loss_fn, optimizer, conf_batch):
+def train_model(device, epoch, model, dataloader, fid_loss_fn, optimizer, batch_size, lu):
 
     stats = myutils.AvgMeter()
 
@@ -43,13 +43,7 @@ def train_model(device, epoch, model, dataloader, fid_loss_fn, optimizer, conf_b
         
         # Create a mask with the same shape as targets, initially set to False
         mask = torch.zeros_like(targets, dtype=torch.bool)
-        # Set the boundary indices of the last two dimensions to True
-        mask[:, :, ::32, ::8] = True
-        #mask[:, :, 0, ::4] = True   # First row in 3rd dimension
-        #mask[:, :, 128, ::4] = True # Middle row in 3rd dimension
-        #mask[:, :, -1, ::4] = True  # Last row in 3rd dimension
-        #mask[:, :, :, 0] = True     # First column in 4tt dimension
-        #mask[:, :, :, -1] = True    # Last column in 4th dimension
+        myutils.point_selector(mask, num_points=50, x_intv=1, y_intv=1, random=False)
         targets[~mask] = torch.nan
 
         
@@ -60,7 +54,7 @@ def train_model(device, epoch, model, dataloader, fid_loss_fn, optimizer, conf_b
         fid_loss = fid_loss_fn(preds_valid, targets_valid)
         
         loss_tmp = 0
-        for i in range(conf_batch):
+        for i in range(batch_size):
             res_in = inputs[i,:,:,:].squeeze()
             pre_in = preds[i,:,:,:].squeeze()
             loss_tmp += res_loss_fn(res_in, pre_in)
@@ -69,6 +63,15 @@ def train_model(device, epoch, model, dataloader, fid_loss_fn, optimizer, conf_b
         
         loss = res_loss + fid_loss
         
+
+        # Calculate L2 Regularization
+        l2_reg = torch.tensor(0.).to(device)
+        for param in model.parameters():
+            l2_reg += torch.norm(param)**2
+        l2_reg = lu * l2_reg
+
+        loss += l2_reg
+        
         loss.backward()
         optimizer.step()
 
@@ -76,10 +79,10 @@ def train_model(device, epoch, model, dataloader, fid_loss_fn, optimizer, conf_b
 
         # Print only when epoch % 10 == 0
         if epoch % 10 == 0:
-            print(f'Epoch [{epoch}], Iteration [{iter_idx + 1}/{len(dataloader)}], Loss: {loss.item():.5f}')
+            print(f'Epoch [{epoch}], Iteration [{iter_idx + 1}/{len(dataloader)}], Loss: {loss.item():.5f}, Res Loss: {res_loss.item():.5f}, Fid Loss: {fid_loss.item():.5f}, Reg Loss: {l2_reg.item():.5f}')
             
     # If epoch is 500, save the last prediction to a .mat file
-    if epoch % 200 == 0:
+    if epoch % 200 == 0 and epoch > 1:
         prediction_np = preds.cpu().detach().numpy()
         savemat(f'prediction_epoch_{epoch}.mat', {'prediction': prediction_np})
 
@@ -92,21 +95,18 @@ def main():
     # get args
     args = get_args()
     print(myutils.gct(), f'Args = {args}')
-    
-    conf_log = ConfigLoader(args.config_path, section='initialization', key='log').get_value()
-    conf_lr = ConfigLoader(args.config_path, section='initialization', key='lr').get_value()
-    conf_seed = ConfigLoader(args.config_path, section='initialization', key='seed').get_value()
-    conf_scheduler_step = ConfigLoader(args.config_path, section='initialization', key='scheduler_step').get_value()
-    conf_epoch = ConfigLoader(args.config_path, section='initialization', key='total_epochs').get_value()
-    conf_batch = ConfigLoader(args.config_path, section='initialization', key='batch_size').get_value()
+
+    # load configurations    
+    conf_data = ConfigLoader(args.config_path, section='dataset').get_value()
+    conf_train = ConfigLoader(args.config_path, section='training').get_value()
+    conf_env = ConfigLoader(args.config_path, section='environment').get_value()
     
     # Ensure 'device' is defined outside of main if not already done
-    gpu = ConfigLoader(args.config_path, section='initialization', key='gpu').get_value()
-    gpu = int(gpu)
+    gpu = conf_env['gpu']
     device = torch.device(f"cuda:{gpu}" if torch.cuda.is_available() and gpu >= 0 else "cpu")
     print(f"Using device: {device}")
 
-    if conf_log:
+    if conf_env['logging']:
         if not os.path.exists('logs'):
             os.makedirs('logs')
 
@@ -125,12 +125,12 @@ def main():
         myutils.save_scripts(main_dir, scripts_to_save=glob('myutils/*.py', recursive=True))
     
     # (N, C, H, W) format is expected
-    data_path = ConfigLoader(args.config_path, section='dataset', key='input_path').get_value()
+    data_path = conf_data['paths']['input']
     input_data = loadmat(data_path)
     input_data = input_data['input_data']
     input_tensor = torch.tensor(input_data, dtype=torch.float32)
 
-    data_path = ConfigLoader(args.config_path, section='dataset', key='target_path').get_value()
+    data_path = conf_data['paths']['target']
     target_data = loadmat(data_path)
     target_data = target_data['h']
     target_tensor = torch.tensor(target_data, dtype=torch.float32)
@@ -138,23 +138,22 @@ def main():
     
     # TensorDataset and DataLoader expect data to be in (N, C, H, W) format
     dataset = TensorDataset(input_tensor,target_tensor)
-    dataloader = DataLoader(dataset, batch_size=conf_batch, shuffle=True, num_workers=2, pin_memory=True)
+    dataloader = DataLoader(dataset, batch_size=conf_train['batch_size'], shuffle=True, num_workers=2, pin_memory=True)
     
-    model = AutoEncoder(device)
-    model = model.to(device)
+    model = AutoEncoder().to(device)
     model.train()
     model.apply(myutils.set_bn_eval)  # turn-off BN
 
     params = model.parameters()
-    optimizer = torch.optim.AdamW(filter(lambda x: x.requires_grad, params), conf_lr)
+    optimizer = torch.optim.AdamW(filter(lambda x: x.requires_grad, params), conf_train['learning_rate'])
 
     start_epoch = 0
     best_loss = 100000000
 
-    if conf_seed < 0:
+    if conf_env['seed'] < 0:
         seed = int(time.time())
     else:
-        seed = conf_seed
+        seed = conf_env['seed']
 
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -162,9 +161,9 @@ def main():
     fid_loss_fn = torch.nn.SmoothL1Loss().to(device)
 
     scheduler = torch.optim.lr_scheduler.StepLR(
-        optimizer, step_size=conf_scheduler_step, gamma=0.5, last_epoch=start_epoch - 1)
+        optimizer, step_size=conf_train['scheduler']['step_size'], gamma=conf_train['scheduler']['gamma'], last_epoch=start_epoch - 1)
 
-    for epoch in range(start_epoch, conf_epoch):
+    for epoch in range(start_epoch, conf_train['max_epoch']):
 
         lr = scheduler.get_last_lr()[0]
         
@@ -172,8 +171,8 @@ def main():
             print('')
             print(myutils.gct(), f'Epoch: {epoch} lr: {lr}')
 
-        loss = train_model(device, epoch, model, dataloader, fid_loss_fn, optimizer, conf_batch)
-        if conf_log:
+        loss = train_model(device, epoch, model, dataloader, fid_loss_fn, optimizer, conf_train['batch_size'], conf_train['regularization'])
+        if conf_env['logging']:
 
             checkpoint = {
                 'epoch': epoch,

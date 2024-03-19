@@ -5,7 +5,6 @@ import numpy as np
 import torch
 import random
 
-
 class AvgMeter(object):
 
     def __init__(self, window=-1):
@@ -121,4 +120,57 @@ def save_scripts_in_directories(directories, destination_dir):
                 
                 # Copy the file
                 shutil.copy(file_path, destination_path)
+                
 
+def point_selector(mask, num_points=50, x_intv=8, y_intv=32, random=False, seed=123):
+
+    # Set a constant seed for reproducibility
+    np.random.seed(seed)
+    _, _, H, W = mask.shape
+    
+    if not random:
+        # Regular pattern selection, including boundary points
+        mask[:, :, -1, ::x_intv] = True
+        mask[:, :, ::y_intv, -1] = True
+        mask[:, :, ::y_intv, ::x_intv] = True
+    else:
+        # Set boundary points
+        mask[:, :, 0, ::x_intv] = True
+        mask[:, :, -1, ::x_intv] = True
+        mask[:, :, ::y_intv, 0] = True
+        mask[:, :, ::y_intv, -1] = True
+        
+        # Generate random indices for the selected number of points within the interior
+        random_rows = np.random.randint(1, H - 1, num_points)
+        random_cols = np.random.randint(1, W - 1, num_points)
+
+        # Ensure random points do not overlap with boundary points
+        for i in range(num_points):
+            mask[:, :, random_rows[i], random_cols[i]] = True
+
+    return mask
+
+def quadratic_extrapolate_pad(input_tensor, pad_width):
+    # Assuming input_tensor is [Batch, Channels, Height, Width]
+    device = input_tensor.device  # Infer the device from the input tensor
+
+    # Prepare tensors for quadratic fitting, ensuring they're on the correct device
+    x = torch.tensor([-2, -1, 0], dtype=torch.float32, device=device)
+    A = torch.stack([x**2, x, torch.ones_like(x)], dim=1)
+
+    # Left edge extrapolation
+    left_values = input_tensor[:, :, :, :3]
+    left_coeffs = torch.linalg.lstsq(A, left_values.permute(3, 0, 1, 2)).solution
+    left_x = torch.arange(-pad_width, 0, dtype=torch.float32, device=device)
+    left_pad = (left_coeffs[0] * left_x**2 + left_coeffs[1] * left_x + left_coeffs[2]).permute(1, 2, 3, 0)
+
+    # Right edge extrapolation
+    right_values = input_tensor[:, :, :, -3:]
+    right_coeffs = torch.linalg.lstsq(A, right_values.permute(3, 0, 1, 2)).solution
+    right_x = torch.arange(1, pad_width + 1, dtype=torch.float32, device=device)
+    right_pad = (right_coeffs[0] * right_x**2 + right_coeffs[1] * right_x + right_coeffs[2]).permute(1, 2, 3, 0)
+
+    # Apply extrapolated padding
+    padded_tensor = torch.cat([left_pad, input_tensor, right_pad], dim=3)
+    
+    return padded_tensor
