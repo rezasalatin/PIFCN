@@ -56,10 +56,8 @@ def continuity_equation_loss_huber(U, V, Ux, Uy, Vx, Vy, h, hx, hy, delta=1.0):
 ###########################################################
 def continuity_only(inputs, targets):
     
-    X = inputs[0, :, :].squeeze()
-    Y = inputs[1, :, :].squeeze()
-    U = inputs[2, :, :].squeeze()
-    V = inputs[3, :, :].squeeze()
+    U = inputs[0, :, :].squeeze()
+    V = inputs[1, :, :].squeeze()
     h = targets[:, :]
 
     #hx, hy = compute_autograd(h, x), compute_autograd(h, y)
@@ -68,14 +66,13 @@ def continuity_only(inputs, targets):
     Vy, Vx = compute_gradients(V, spacing=0.1)
     
     # Create a mask for non-NaN values
-    valid_mask = ~torch.isnan(X) & ~torch.isnan(Y) & ~torch.isnan(h) & \
+    valid_mask = ~torch.isnan(h) & \
             ~torch.isnan(U) & ~torch.isnan(V) & \
             ~torch.isnan(Ux) & ~torch.isnan(Uy) & \
             ~torch.isnan(Vx) & ~torch.isnan(Vy) & \
             ~torch.isnan(hx) & ~torch.isnan(hy)
             
     # Apply the mask to all variables
-    X, Y = X[valid_mask], Y[valid_mask]
     U, V = U[valid_mask], V[valid_mask]
     Ux = Ux[valid_mask]
     Vy = Vy[valid_mask]

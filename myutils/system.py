@@ -122,7 +122,7 @@ def save_scripts_in_directories(directories, destination_dir):
                 shutil.copy(file_path, destination_path)
                 
 
-def point_selector(mask, num_points=50, x_intv=8, y_intv=32, random=False, seed=123):
+def point_selector(mask, x_intv=8, y_intv=32, random=False, num_points=50, seed=123):
 
     # Set a constant seed for reproducibility
     np.random.seed(seed)

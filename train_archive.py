@@ -25,69 +25,51 @@ def get_args():
     return parser.parse_args()
 
 
-def train_model(device, epoch, model, dataloader, fid_loss_fn, optimizer, batch_size, lu):
-
+def train_model(device, epoch, model, dataloader, fid_loss_fn, optimizer, batch_size, lu, fid, phy):
     stats = myutils.AvgMeter()
 
     for iter_idx, sample in enumerate(dataloader):
-        
         inputs = sample[0].to(device)
         targets = sample[1].to(device)
         preds = model(inputs)
-        
-        #graph = make_dot(prediction, params=dict(model.named_parameters()))
-        #graph.render('model_graph', format='png')
-        #graph
 
         optimizer.zero_grad()
-        
-        # Create a mask with the same shape as targets, initially set to False
-        mask = torch.zeros_like(targets, dtype=torch.bool)
-        myutils.point_selector(mask, num_points=50, x_intv=1, y_intv=1, random=False)
-        targets[~mask] = torch.nan
+        loss = 0.0  # Initialize loss for this batch
 
+        # Apply mask and calculate valid losses
+        mask = torch.zeros_like(targets, dtype=torch.bool)
+        myutils.point_selector(mask, x_intv=8, y_intv=64, random=False, num_points=50)
+        targets[~mask] = torch.nan
         
         valid_mask = ~torch.isnan(preds) & ~torch.isnan(targets)
-        # Apply the mask to both predictions and targets to remove NaNs
         preds_valid = preds[valid_mask]
         targets_valid = targets[valid_mask]
-        fid_loss = fid_loss_fn(preds_valid, targets_valid)
-        
-        loss_tmp = 0
-        for i in range(batch_size):
-            res_in = inputs[i,:,:,:].squeeze()
-            pre_in = preds[i,:,:,:].squeeze()
-            loss_tmp += res_loss_fn(res_in, pre_in)
-            
-        res_loss = torch.mean(loss_tmp)
-        
-        loss = res_loss + fid_loss
-        
 
-        # Calculate L2 Regularization
-        l2_reg = torch.tensor(0.).to(device)
-        for param in model.parameters():
-            l2_reg += torch.norm(param)**2
-        l2_reg = lu * l2_reg
+        # Fidelity loss
+        if fid:
+            fid_loss = fid_loss_fn(preds_valid, targets_valid)
+            loss += fid_loss
 
-        loss += l2_reg
-        
+        # Physics-based loss
+        if phy:
+            res_loss = torch.tensor([res_loss_fn(inputs[i,:,:,:].squeeze(), preds[i,:,:,:].squeeze()) for i in range(batch_size)]).mean()
+            loss += res_loss
+
+        # Backpropagation
         loss.backward()
         optimizer.step()
 
         stats.update(loss.item())
 
-        # Print only when epoch % 10 == 0
         if epoch % 10 == 0:
-            print(f'Epoch [{epoch}], Iteration [{iter_idx + 1}/{len(dataloader)}], Loss: {loss.item():.5f}, Res Loss: {res_loss.item():.5f}, Fid Loss: {fid_loss.item():.5f}, Reg Loss: {l2_reg.item():.5f}')
-            
+            print(f'Epoch [{epoch}], Iteration [{iter_idx + 1}/{len(dataloader)}], Total Loss: {loss.item():.5f}')
+
     # If epoch is 500, save the last prediction to a .mat file
     if epoch % 200 == 0 and epoch > 1:
         prediction_np = preds.cpu().detach().numpy()
         savemat(f'prediction_epoch_{epoch}.mat', {'prediction': prediction_np})
 
     return stats.avg
-
 
 
 def main():  
@@ -144,9 +126,10 @@ def main():
     model.train()
     model.apply(myutils.set_bn_eval)  # turn-off BN
 
-    params = model.parameters()
-    optimizer = torch.optim.AdamW(filter(lambda x: x.requires_grad, params), conf_train['learning_rate'])
-
+    optimizer = torch.optim.AdamW(filter(lambda x: x.requires_grad, model.parameters()),
+                                  lr=conf_train['learning_rate'],
+                                  weight_decay=conf_train['regularization'])
+    
     start_epoch = 0
     best_loss = 100000000
 
@@ -171,7 +154,7 @@ def main():
             print('')
             print(myutils.gct(), f'Epoch: {epoch} lr: {lr}')
 
-        loss = train_model(device, epoch, model, dataloader, fid_loss_fn, optimizer, conf_train['batch_size'], conf_train['regularization'])
+        loss = train_model(device, epoch, model, dataloader, fid_loss_fn, optimizer, conf_train['batch_size'], conf_train['regularization'], conf_train['fidelity'], conf_train['physics'],)
         if conf_env['logging']:
 
             checkpoint = {

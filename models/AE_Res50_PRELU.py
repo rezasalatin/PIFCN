@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
-from torchvision.models import resnet50
+from torchvision.models import resnet50, ResNet50_Weights
 from torch.nn.init import kaiming_normal_
 
 class ResBlock(nn.Module):
@@ -41,8 +41,8 @@ class Encoder(nn.Module):
     """
     def __init__(self):
         super(Encoder, self).__init__()
-        resnet = resnet50(pretrained=False)
-        self.conv1 = nn.Conv2d(4, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        resnet = resnet50(weights=ResNet50_Weights.IMAGENET1K_V1)
+        self.conv1 = nn.Conv2d(2, 64, kernel_size=7, stride=2, padding=3, bias=False)
         kaiming_normal_(self.conv1.weight, mode='fan_out', nonlinearity='relu')  # Adjusted for PReLU
         self.bn1 = resnet.bn1
         self.prelu = nn.PReLU()  # PReLU initialization
@@ -50,8 +50,10 @@ class Encoder(nn.Module):
         self.res2 = resnet.layer1
         self.res3 = resnet.layer2
         self.res4 = resnet.layer3
-        self.register_buffer('max_values', torch.tensor([33.0, 13.0, 0.23, 0.09]).view(1, 4, 1, 1))
-        self.register_buffer('min_values', torch.tensor([25.0, -13.0, -0.29, -0.11]).view(1, 4, 1, 1))
+        #self.register_buffer('max_values', torch.tensor([33.0, 13.0, 0.23, 0.09]).view(1, 4, 1, 1))
+        #self.register_buffer('min_values', torch.tensor([25.0, -13.0, -0.29, -0.11]).view(1, 4, 1, 1))
+        self.register_buffer('max_values', torch.tensor([0.23, 0.09]).view(1, 2, 1, 1))
+        self.register_buffer('min_values', torch.tensor([-0.29, -0.11]).view(1, 2, 1, 1))
 
     def forward(self, in_f):
         f = (in_f - self.min_values) / (self.max_values - self.min_values)

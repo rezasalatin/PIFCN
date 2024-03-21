@@ -1,0 +1,16 @@
+dataset:
+  paths:
+    input: ./dataset/test_input2.mat
+    target: ./dataset/test_target.mat
+  format:
+    inputs: [U, V]  # Input variable names.
+    output: h             # Target variable name.
+
+test:
+  batch_size: 1           # Number of samples per batch.
+  model_path: ./logs/20240321-1115/model/checkpoint_epoch_1000.pth
+  results_dir: ./dataset/
+
+environment:
+  gpu: 0                  # Identifier for the GPU to use.
+  seed: 1234              # Seed for random number generation.
