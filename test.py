@@ -6,7 +6,7 @@ from scipy.io import loadmat, savemat
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 from config.read_yaml import ConfigLoader
-from models.AE_Res50_PRELU import AutoEncoder
+from models.AE_Res50 import AutoEncoder
 import myutils
 import argparse
 

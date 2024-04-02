@@ -6,7 +6,7 @@ from scipy.io import loadmat, savemat
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 from config.read_yaml import ConfigLoader
-from models.AE_Res50_PRELU import AutoEncoder
+from models.AE_Res50 import AutoEncoder
 from models.physics import continuity_only as res_loss_fn
 import myutils
 import argparse
@@ -23,6 +23,7 @@ class ConfigManager:
         self.dataset_config = ConfigLoader(config_path, section='dataset').get_value()
         self.training_config = ConfigLoader(config_path, section='training').get_value()
         self.environment_config = ConfigLoader(config_path, section='environment').get_value()
+        self.physics_config = ConfigLoader(config_path, section='physics').get_value()
         
 class Trainer:
     def __init__(self, config_manager):
@@ -67,9 +68,9 @@ class Trainer:
         myutils.save_scripts(self.main_dir, scripts_to_save=glob('models/*.py', recursive=True))
         myutils.save_scripts(self.main_dir, scripts_to_save=glob('myutils/*.py', recursive=True))
 
-    def _log_training_progress(self, epoch, avg_loss):
+    def _log_training_progress(self, epoch, avg_loss, avg_fid_loss, avg_res_loss):
         if epoch % 10 == 0:
-            print(f'Epoch {epoch}, Average Loss: {avg_loss:.5f}')
+            print(f"Epoch: {epoch}, Avg Loss: {avg_loss:.4f}, Avg FID Loss: {avg_fid_loss:.4f}, Avg RES Loss: {avg_res_loss:.4f}")
 
     def _save_checkpoint(self, epoch, avg_loss):
         checkpoint = {
@@ -109,33 +110,47 @@ class Trainer:
         return DataLoader(dataset, batch_size=self.config_manager.training_config['batch_size'], shuffle=True, num_workers=2, pin_memory=True)
 
     def train_epoch(self, epoch):
-        stats = myutils.AvgMeter()
+        stats_loss = myutils.AvgMeter()
+        stats_fid_loss = myutils.AvgMeter()
+        stats_res_loss = myutils.AvgMeter()
+
         last_preds = None  # Initialize to store last batch predictions
+
         for iter_idx, (inputs, targets) in enumerate(self.dataloader):
             inputs, targets = inputs.to(self.device), targets.to(self.device)
             preds = self.model(inputs)
             self.optimizer.zero_grad()
-            loss = self._calculate_loss(inputs, targets, preds)
+            loss, fid_loss, res_loss = self._calculate_loss(inputs, targets, preds)
             loss.backward()
             self.optimizer.step()
-            stats.update(loss.item())
+
+            # Update the AvgMeters
+            stats_loss.update(loss.item())
+            stats_fid_loss.update(fid_loss.item())
+            stats_res_loss.update(res_loss.item())
+
             if (epoch+1) % 200 == 0:
                 last_preds = preds.detach().cpu().numpy()
 
-        avg_loss = stats.avg  # Get the average loss for the epoch
-        self._log_training_progress(epoch+1, avg_loss)  # Log the average loss
+        # Get the average losses for the epoch
+        avg_loss = stats_loss.avg
+        avg_fid_loss = stats_fid_loss.avg
+        avg_res_loss = stats_res_loss.avg
+
+        # Log the average losses
+        self._log_training_progress(epoch + 1, avg_loss, avg_fid_loss, avg_res_loss)
+
         self._save_checkpoint(epoch+1, avg_loss)  # Save checkpoint with the average loss
         if last_preds is not None:
             self._save_predictions(epoch+1, last_preds)  # Save predictions for this epoch          
 
-        return avg_loss
 
     def _calculate_loss(self, inputs, targets, preds):
         loss = 0.0  # Initialize loss for this batch
 
         # Apply mask and calculate valid losses
         mask = torch.zeros_like(targets, dtype=torch.bool)
-        myutils.point_selector(mask, x_intv=4, y_intv=32, random=False, num_points=50)
+        myutils.point_selector(mask, x_intv=2, y_intv=2, random=False, num_points=50)
         targets[~mask] = torch.nan
         
         valid_mask = ~torch.isnan(preds) & ~torch.isnan(targets)
@@ -150,11 +165,13 @@ class Trainer:
         # Physics-based loss
         if self.config_manager.training_config['physics']:
             batch_size = self.config_manager.training_config['batch_size']
-            res_losses = [res_loss_fn(inputs[i,:,:,:].squeeze(), preds[i,:,:,:].squeeze()) for i in range(batch_size)]
+            dx = self.config_manager.physics_config['dx']
+            dy = self.config_manager.physics_config['dy']
+            res_losses = [res_loss_fn(inputs[i,:,:,:].squeeze(), preds[i,:,:,:].squeeze(), dx, dy) for i in range(batch_size)]
             res_loss = torch.tensor(res_losses, device=self.device).mean()
             loss += res_loss
 
-        return loss
+        return loss, fid_loss, res_loss
 
     def train(self):
         for epoch in range(self.config_manager.training_config['max_epoch']):

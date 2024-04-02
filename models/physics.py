@@ -17,23 +17,23 @@ def compute_autograd(pred, var):
 
 ###########################################################
 # compute gradients
-def compute_gradients(tensor, spacing=0.1):
+def compute_gradients(tensor, dx, dy):
     # Initialize gradient tensors
     gradient_x = torch.zeros_like(tensor)
     gradient_y = torch.zeros_like(tensor)
     
     # Centered differences for interior points
-    gradient_x[:, 1:-1] = (tensor[:, 2:] - tensor[:, :-2]) / (2 * spacing)
-    gradient_y[1:-1, :] = (tensor[2:, :] - tensor[:-2, :]) / (2 * spacing)
+    gradient_x[:, 1:-1] = (tensor[:, 2:] - tensor[:, :-2]) / (2 * dx)
+    gradient_y[1:-1, :] = (tensor[2:, :] - tensor[:-2, :]) / (2 * dy)
     
     # One-way differences for edges
     # For x
-    gradient_x[:, 0] = (tensor[:, 1] - tensor[:, 0]) / spacing  # Forward difference
-    gradient_x[:, -1] = (tensor[:, -1] - tensor[:, -2]) / spacing  # Backward difference
+    gradient_x[:, 0] = (tensor[:, 1] - tensor[:, 0]) / dx  # Forward difference
+    gradient_x[:, -1] = (tensor[:, -1] - tensor[:, -2]) / dy  # Backward difference
     
     # For y
-    gradient_y[0, :] = (tensor[1, :] - tensor[0, :]) / spacing  # Forward difference
-    gradient_y[-1, :] = (tensor[-1, :] - tensor[-2, :]) / spacing  # Backward difference
+    gradient_y[0, :] = (tensor[1, :] - tensor[0, :]) / dx  # Forward difference
+    gradient_y[-1, :] = (tensor[-1, :] - tensor[-2, :]) / dy  # Backward difference
 
     return gradient_y, gradient_x
 
@@ -54,16 +54,16 @@ def continuity_equation_loss_huber(U, V, Ux, Uy, Vx, Vy, h, hx, hy, delta=1.0):
     return loss
 
 ###########################################################
-def continuity_only(inputs, targets):
+def continuity_only(inputs, targets, dx, dy):
     
     U = inputs[0, :, :].squeeze()
     V = inputs[1, :, :].squeeze()
     h = targets[:, :]
 
     #hx, hy = compute_autograd(h, x), compute_autograd(h, y)
-    hy, hx = compute_gradients(h, spacing=0.1)
-    Uy, Ux = compute_gradients(U, spacing=0.1)
-    Vy, Vx = compute_gradients(V, spacing=0.1)
+    hy, hx = compute_gradients(h, dx, dy)
+    Uy, Ux = compute_gradients(U, dx, dy)
+    Vy, Vx = compute_gradients(V, dx, dy)
     
     # Create a mask for non-NaN values
     valid_mask = ~torch.isnan(h) & \
@@ -79,22 +79,6 @@ def continuity_only(inputs, targets):
     h, hx, hy = h[valid_mask], hx[valid_mask], hy[valid_mask]
 
     # Continuity equation loss
-    #fc = torch.mean((hx*U+Ux*h + hy*V+Vy*h)**2)
-    fc = continuity_equation_loss_huber(U, V, Ux, Uy, Vx, Vy, h, hx, hy, delta=1.0)
-    
-    # Enforce strict constraint for hx and hy not to exceed absolute values of 0.5 or 0.1
-    constraint_violation_hx = torch.max(torch.zeros_like(hx), torch.abs(hx) - 0.5)
-    constraint_violation_hy = torch.max(torch.zeros_like(hy), torch.abs(hy) - 0.5)
-    # Enforce constraint that h should not be negative
-    constraint_violation_h = torch.max(torch.zeros_like(h), - (h + 0.1))
-    
-    # Polynomial penalty (quadratic for example)
-    penalty_h = (constraint_violation_hx**2) + (constraint_violation_hy**2) + (constraint_violation_h**2)
-
-    # Apply an exponential penalty for any violation
-    #penalty_h = torch.exp(constraint_violation_hx) + torch.exp(constraint_violation_hy) + torch.exp(constraint_violation_h) - 3  # Subtract 0.6 to offset the base case where there's no violation
-
-    # Total loss
-    loss = fc #+ penalty_h.sum()
+    loss = continuity_equation_loss_huber(U, V, Ux, Uy, Vx, Vy, h, hx, hy, delta=1.0)
 
     return loss

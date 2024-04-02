@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from config.read_yaml import ConfigLoader
 #from dataset.DatSet import Training_dataset
-from models.AE_Res50_PRELU import AutoEncoder
+from models.AE_Res50 import AutoEncoder
 from models.physics import continuity_only as res_loss_fn
 import myutils
 
