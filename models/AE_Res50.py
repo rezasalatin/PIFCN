@@ -78,7 +78,6 @@ class Refine(nn.Module):
         super(Refine, self).__init__()
         self.convFS = nn.Conv2d(inplanes, planes, kernel_size=3, stride=1, padding=1)
         self.ResFS = ResBlock(planes, planes)
-        self.ResMM = ResBlock(planes, planes)
 
     def forward(self, f, pm):
         s = self.ResFS(self.convFS(f))
