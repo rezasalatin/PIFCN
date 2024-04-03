@@ -1,7 +1,7 @@
 dataset:
   paths:
-    input: ./dataset/train_input_field.mat
-    target: ./dataset/train_target_field.mat
+    input: ./dataset/train_input_field_rnd.mat
+    target: ./dataset/train_target_field_rnd.mat
   format:
     inputs: [X, Y, U, V]  # Input variable names.
     output: h             # Target variable name.
@@ -9,12 +9,12 @@ dataset:
 
 training:
   max_epoch: 1000        # Total number of training epochs.
-  batch_size: 8           # Number of samples per batch.
-  learning_rate: 0.001    # Initial learning rate.
-  regularization: 0.01    # Regularization factor for model training.
+  batch_size: 2           # Number of samples per batch.
+  regularization: 0.02    # Regularization factor for model training.
+  learning_rate: 0.0005    # Initial learning rate.
   scheduler:
-    step_size: 200        # Learning rate scheduler step size.
-    gamma: 0.5            # Learning rate decay factor.
+    step_size: 100        # Learning rate scheduler step size.
+    gamma: 0.8            # Learning rate decay factor.
   physics: True
   fidelity: True
   patience: 1000
@@ -27,3 +27,4 @@ environment:
 physics:
   dx: 3.2
   dy: 3.2
+  huber_delta: 0.25

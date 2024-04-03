@@ -58,7 +58,7 @@ class Encoder(nn.Module):
         self.res4 = resnet.layer3
         #self.register_buffer('max_values', torch.tensor([33.0, 13.0, 0.23, 0.09]).view(1, 4, 1, 1))
         #self.register_buffer('min_values', torch.tensor([25.0, -13.0, -0.29, -0.11]).view(1, 4, 1, 1))
-        self.register_buffer('max_values', torch.tensor([240.0, 201.6, 0.647, 1.864]).view(1, 4, 1, 1))
+        self.register_buffer('max_values', torch.tensor([240.0, 201.6, 0.647, 1.054]).view(1, 4, 1, 1))
         self.register_buffer('min_values', torch.tensor([0.0, 0.0, -0.797, -1.655]).view(1, 4, 1, 1))
 
     def forward(self, in_f):

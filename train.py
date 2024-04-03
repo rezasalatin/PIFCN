@@ -107,7 +107,7 @@ class Trainer:
         input_tensor = torch.tensor(input_data, dtype=torch.float32)
         target_tensor = torch.tensor(target_data, dtype=torch.float32)
         dataset = TensorDataset(input_tensor, target_tensor)
-        return DataLoader(dataset, batch_size=self.config_manager.training_config['batch_size'], shuffle=True, num_workers=2, pin_memory=True)
+        return DataLoader(dataset, batch_size=self.config_manager.training_config['batch_size'], shuffle=True, drop_last=True, num_workers=2, pin_memory=True)
 
     def train_epoch(self, epoch):
         stats_loss = myutils.AvgMeter()
@@ -167,7 +167,8 @@ class Trainer:
             batch_size = self.config_manager.training_config['batch_size']
             dx = self.config_manager.physics_config['dx']
             dy = self.config_manager.physics_config['dy']
-            res_losses = [res_loss_fn(inputs[i,:,:,:].squeeze(), preds[i,:,:,:].squeeze(), dx, dy) for i in range(batch_size)]
+            delta = self.config_manager.physics_config['huber_delta']
+            res_losses = [res_loss_fn(inputs[i,:,:,:].squeeze(), preds[i,:,:,:].squeeze(), dx, dy, delta) for i in range(batch_size)]
             res_loss = torch.tensor(res_losses, device=self.device).mean()
             loss += res_loss
 
