@@ -126,8 +126,10 @@ class Trainer:
 
             # Update the AvgMeters
             stats_loss.update(loss.item())
-            stats_fid_loss.update(fid_loss.item())
-            stats_res_loss.update(res_loss.item())
+            if self.config_manager.training_config['fidelity']:
+                stats_fid_loss.update(fid_loss.item())
+            if self.config_manager.training_config['physics']:
+                stats_res_loss.update(res_loss.item())
 
             if (epoch+1) % 200 == 0:
                 last_preds = preds.detach().cpu().numpy()
@@ -147,10 +149,12 @@ class Trainer:
 
     def _calculate_loss(self, inputs, targets, preds):
         loss = 0.0  # Initialize loss for this batch
+        fid_loss = 0.0
+        res_loss = 0.0
 
         # Apply mask and calculate valid losses
         mask = torch.zeros_like(targets, dtype=torch.bool)
-        myutils.point_selector(mask, x_intv=2, y_intv=2, random=False, num_points=50)
+        myutils.point_selector(mask, x_intv=1, y_intv=1, random=False, num_points=50)
         targets[~mask] = torch.nan
         
         valid_mask = ~torch.isnan(preds) & ~torch.isnan(targets)

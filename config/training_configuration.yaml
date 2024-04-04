@@ -1,11 +1,14 @@
 dataset:
   paths:
-    input: ./dataset/train_input_field_rnd.mat
-    target: ./dataset/train_target_field_rnd.mat
+    input: ./dataset/train_input_field_fill.mat
+    target: ./dataset/train_target_field_fill.mat
   format:
     inputs: [X, Y, U, V]  # Input variable names.
-    output: h             # Target variable name.
+    target: h             # Target variable name.
   output_size: 256        # Size of the output variable.
+  channels:
+    input: 4
+    target: 1
 
 training:
   max_epoch: 1000        # Total number of training epochs.
