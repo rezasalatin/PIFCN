@@ -1,7 +1,7 @@
 dataset:
   paths:
-    input: ./dataset/train_input_field_fill.mat
-    target: ./dataset/train_target_field_fill.mat
+    input: ./dataset/train_input_field_fill_201318.mat
+    target: ./dataset/train_target_field_fill_201318.mat
   format:
     inputs: [X, Y, U, V]  # Input variable names.
     target: h             # Target variable name.

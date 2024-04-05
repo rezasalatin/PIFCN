@@ -8,7 +8,7 @@ dataset:
 
 test:
   batch_size: 1           # Number of samples per batch.
-  model_path: ./logs/20240403-1734/model/checkpoint_epoch_1000.pth
+  model_path: ./logs/20240404-1633/model/checkpoint_epoch_1000.pth
   results_dir: ./dataset/
 
 environment:
