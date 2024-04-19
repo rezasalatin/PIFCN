@@ -1,14 +1,14 @@
 dataset:
   paths:
-    input: ./dataset/test_input_field_fill.mat
-    target: ./dataset/test_target_field_fill.mat
+    input: ./dataset/test_input_April11.mat
+    target: ./dataset/test_target_April11.mat
   format:
     inputs: [X, Y, U, V]  # Input variable names.
-    output: h             # Target variable name.
+    output: [U, V]             # Target variable name.
 
 test:
   batch_size: 1           # Number of samples per batch.
-  model_path: ./logs/20240404-1633/model/checkpoint_epoch_1000.pth
+  model_path: ./logs/20240411-2331/model/checkpoint_epoch_600.pth
   results_dir: ./dataset/
 
 environment:

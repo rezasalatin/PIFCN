@@ -1,7 +1,7 @@
 dataset:
   paths:
-    input: ./dataset/train_input_field_fill_201318.mat
-    target: ./dataset/train_target_field_fill_201318.mat
+    input: ./dataset/train_input_April12.mat
+    target: ./dataset/train_target_April12.mat
   format:
     inputs: [X, Y, U, V]  # Input variable names.
     target: h             # Target variable name.
@@ -13,10 +13,10 @@ dataset:
 training:
   max_epoch: 1000        # Total number of training epochs.
   batch_size: 2           # Number of samples per batch.
-  regularization: 0.02    # Regularization factor for model training.
-  learning_rate: 0.0005    # Initial learning rate.
+  regularization: 0.05    # Regularization factor for model training.
+  learning_rate: 0.0002    # Initial learning rate.
   scheduler:
-    step_size: 100        # Learning rate scheduler step size.
+    step_size: 200        # Learning rate scheduler step size.
     gamma: 0.8            # Learning rate decay factor.
   physics: True
   fidelity: True

@@ -6,7 +6,7 @@ from scipy.io import loadmat, savemat
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 from config.read_yaml import ConfigLoader
-from models.AE_Res50_twostep import AutoEncoder
+from models.VAE import VAE  # Updated to use the VAE model
 import myutils
 import argparse
 
@@ -37,7 +37,7 @@ class Tester:
         return torch.device(f"cuda:{gpu}" if torch.cuda.is_available() and gpu >= 0 else "cpu")
     
     def _load_model(self):
-        model = AutoEncoder().to(self.device)
+        model = VAE().to(self.device)
         model_path = self.config_manager.test_config['model_path']
         # Load the entire checkpoint, not just the model state dictionary
         checkpoint = torch.load(model_path, map_location=self.device)
@@ -60,8 +60,10 @@ class Tester:
         for inputs, targets in self.dataloader:
             inputs, targets = inputs.to(self.device), targets.to(self.device)
             with torch.no_grad():
-                preds = self.model(inputs)
-                all_predictions.append(preds.cpu())  # Append predictions to the list
+                # Obtain outputs from the model; assuming preds is a tuple and the first item is the actual predictions
+                preds, _, _ = self.model(inputs)
+                # Move predictions to CPU and append to list; accessing [0] directly as preds should be the desired tensor now
+                all_predictions.append(preds.cpu())
 
         # Concatenate all batch predictions into a single tensor
         all_predictions = torch.cat(all_predictions, dim=0)

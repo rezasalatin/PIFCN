@@ -6,7 +6,7 @@ from scipy.io import loadmat, savemat
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 from config.read_yaml import ConfigLoader
-from models.AE_Res50_twostep import AutoEncoder
+from models.VAE import VAE  # Updated to use the VAE model
 from models.physics import continuity_only as res_loss_fn
 import myutils
 import argparse
@@ -24,19 +24,20 @@ class ConfigManager:
         self.training_config = ConfigLoader(config_path, section='training').get_value()
         self.environment_config = ConfigLoader(config_path, section='environment').get_value()
         self.physics_config = ConfigLoader(config_path, section='physics').get_value()
-        
+
+
 class Trainer:
     def __init__(self, config_manager):
         self.config_manager = config_manager
         self.device = self._setup_device()
         self.set_seeds(self.config_manager.environment_config['seed'])
-        self.model = AutoEncoder().to(self.device)
+        self.model = VAE().to(self.device)  # Use VAE instead of AutoEncoder
         self.optimizer = self._setup_optimizer()
         self.fid_loss_fn = torch.nn.SmoothL1Loss().to(self.device)
         self.scheduler = self._setup_scheduler()
         self.dataloader = self._setup_dataloader()
         self.model.train()
-        self.model.apply(myutils.set_bn_eval)  # turn-off BN
+        self.model.apply(myutils.set_bn_eval)
         self.main_dir = self._setup_logging_directory()
         self.model_dir = os.path.join(self.main_dir, 'model')
         os.makedirs(self.model_dir, exist_ok=True)
@@ -60,7 +61,7 @@ class Trainer:
         main_dir = os.path.join('logs', time.strftime('%Y%m%d-%H%M'))
         os.makedirs(main_dir, exist_ok=True)
         return main_dir
-    
+
     def _save_scripts(self):
         myutils.save_scripts(self.main_dir, scripts_to_save=glob('*.*'))
         myutils.save_scripts(self.main_dir, scripts_to_save=glob('config/*.*', recursive=True))
@@ -118,13 +119,10 @@ class Trainer:
 
         for iter_idx, (inputs, targets) in enumerate(self.dataloader):
             inputs, targets = inputs.to(self.device), targets.to(self.device)            
-            preds = self.model(inputs)
-            
-            slice1 = inputs[0:1, 2:3, :, :].detach().cpu().numpy().squeeze()
-            slice2 = preds[0:1, 0:1, :, :].detach().cpu().numpy().squeeze()
+            preds, mu, logvar = self.model(inputs)
             
             self.optimizer.zero_grad()
-            loss, fid_loss, res_loss = self._calculate_loss(inputs, targets, preds)
+            loss, fid_loss, res_loss = self._calculate_loss(inputs, targets, preds, mu, logvar)
             loss.backward()
             self.optimizer.step()
 
@@ -151,14 +149,14 @@ class Trainer:
             self._save_predictions(epoch+1, last_preds)  # Save predictions for this epoch          
 
 
-    def _calculate_loss(self, inputs, targets, preds):
+    def _calculate_loss(self, inputs, targets, preds, mu, logvar):
         loss = 0.0  # Initialize loss for this batch
         fid_loss = 0.0
         res_loss = 0.0
 
         # Apply mask and calculate valid losses
         mask = torch.zeros_like(targets, dtype=torch.bool)
-        myutils.point_selector(mask, x_intv=1, y_intv=1, random=False, num_points=50)
+        myutils.point_selector(mask, x_intv=4, y_intv=4, random=False, num_points=50)
         targets[~mask] = torch.nan
         
         valid_mask = ~torch.isnan(preds) & ~torch.isnan(targets)
@@ -167,7 +165,11 @@ class Trainer:
 
         # Fidelity loss
         if self.config_manager.training_config['fidelity']:
-            fid_loss = self.fid_loss_fn(preds_valid, targets_valid)
+            # Binary Cross-Entropy Loss (BCE)
+            BCE = self.fid_loss_fn(preds_valid, targets_valid)
+            # KL divergence
+            KLD = -0.5 * sum([torch.sum(1 + lv - m.pow(2) - lv.exp()) for m, lv in zip(mu, logvar)])
+            fid_loss = BCE + KLD
             loss += fid_loss
 
         # Physics-based loss
@@ -176,8 +178,9 @@ class Trainer:
             dx = self.config_manager.physics_config['dx']
             dy = self.config_manager.physics_config['dy']
             delta = self.config_manager.physics_config['huber_delta']
-            res_losses = [res_loss_fn(inputs[i,:,:,:].squeeze(), preds[i,:,:,:].squeeze(), dx, dy, delta) for i in range(batch_size)]
+            res_losses = [res_loss_fn(inputs[i,2:4,:,:].squeeze(), preds[i,:,:,:].squeeze(), dx, dy, delta) for i in range(batch_size)]
             res_loss = torch.tensor(res_losses, device=self.device).mean()
+            res_loss = 100*res_loss
             loss += res_loss
 
         return loss, fid_loss, res_loss

@@ -1,3 +1,5 @@
+## Variational AutoEncoder
+
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -43,29 +45,7 @@ class ResBlock(nn.Module):
             identity = self.downsample(x)
         out += identity
         return self.prelu(out)
-
-class Encoder(nn.Module):
-    def __init__(self):
-        super(Encoder, self).__init__()
-        resnet = resnet50(weights=ResNet50_Weights.IMAGENET1K_V1)
-        self.conv1 = nn.Conv2d(4, 64, kernel_size=7, stride=2, padding=(3, 2), bias=False)
-        kaiming_normal_(self.conv1.weight, mode='fan_out', nonlinearity='relu')  # Adjusted for PReLU
-        self.bn1 = resnet.bn1
-        self.prelu = nn.PReLU()  # PReLU initialization
-        self.maxpool = resnet.maxpool
-        self.res2 = resnet.layer1
-        self.res3 = resnet.layer2
-        self.res4 = resnet.layer3
-        #self.register_buffer('max_values', torch.tensor([33.0, 13.0, 0.23, 0.09]).view(1, 4, 1, 1))
-        #self.register_buffer('min_values', torch.tensor([25.0, -13.0, -0.29, -0.11]).view(1, 4, 1, 1))
-        self.register_buffer('max_values', torch.tensor([240.0, 201.6, 0.647, 1.054]).view(1, 4, 1, 1))
-        self.register_buffer('min_values', torch.tensor([0.0, 0.0, -0.797, -1.655]).view(1, 4, 1, 1))
-
-    def forward(self, in_f):
-        f = (in_f - self.min_values) / (self.max_values - self.min_values)
-        x = self.maxpool(self.prelu(self.bn1(self.conv1(f))))  # Apply PReLU
-        return self.res4(self.res3(self.res2(x))), self.res3(self.res2(x)), self.res2(x), x
-
+    
 class Refine(nn.Module):
     """
     Refinement module that upsamples and refines features using convolution and residual blocks.
@@ -85,6 +65,43 @@ class Refine(nn.Module):
         m = match_and_add(s, F.interpolate(pm, scale_factor=2, mode='bilinear', align_corners=False))
         return self.ResMM(m)
 
+class Encoder(nn.Module):
+    def __init__(self):
+        super(Encoder, self).__init__()
+        resnet = resnet50(weights=ResNet50_Weights.IMAGENET1K_V1)
+        self.conv1 = nn.Conv2d(4, 64, kernel_size=7, stride=2, padding=(3, 2), bias=False)
+        kaiming_normal_(self.conv1.weight, mode='fan_out', nonlinearity='relu')  # Adjusted for PReLU
+        self.bn1 = resnet.bn1
+        self.prelu = nn.PReLU()  # PReLU initialization
+        self.maxpool = resnet.maxpool
+        self.res2 = resnet.layer1
+        self.res3 = resnet.layer2
+        self.res4 = resnet.layer3
+        #self.register_buffer('max_values', torch.tensor([33.0, 13.0, 0.23, 0.09]).view(1, 4, 1, 1))
+        #self.register_buffer('min_values', torch.tensor([25.0, -13.0, -0.29, -0.11]).view(1, 4, 1, 1))
+        self.register_buffer('max_values', torch.tensor([240.0, 201.6, 0.647, 1.054]).view(1, 4, 1, 1))
+        self.register_buffer('min_values', torch.tensor([0.0, 0.0, -0.797, -1.655]).view(1, 4, 1, 1))
+        
+        # Initialize linear layers correctly based on the actual feature map sizes
+        self.fc_mu = nn.ModuleList([
+            nn.Linear(1024*4*5, 64)      # Input dimensions for r4
+        ])
+        self.fc_logvar = nn.ModuleList([
+            nn.Linear(1024*4*5, 64)
+        ])
+
+    def forward(self, in_f):
+        f = (in_f - self.min_values) / (self.max_values - self.min_values)        
+        x = self.maxpool(self.prelu(self.bn1(self.conv1(f))))  # Apply PReLU
+        r2 = self.res2(x)
+        r3 = self.res3(r2)
+        r4 = self.res4(r3)
+        
+        mu = [self.fc_mu[0](r4.flatten(start_dim=1))]
+        logvar = [self.fc_logvar[0](r4.flatten(start_dim=1))]
+        
+        return r4, r3, r2, x, mu, logvar
+
 class Decoder(nn.Module):
     def __init__(self):
         super(Decoder, self).__init__()
@@ -95,20 +112,31 @@ class Decoder(nn.Module):
         self.RF3 = Refine(512, mdim_global)
         self.RF2 = Refine(256, mdim_global)
         self.pred_global = nn.Conv2d(mdim_global, 1, kernel_size=3, stride=1, padding=1)
-        self.convGL = nn.Conv2d(2, 2, kernel_size=3, stride=1, padding=1)
+        ## here determine the number of output channels in the second parameter
+        self.convGL = nn.Conv2d(2, 1, kernel_size=3, stride=1, padding=1)
         kaiming_normal_(self.convGL.weight, mode='fan_out', nonlinearity='relu')  # Adjusted for PReLU
         self.local_convFM = nn.Conv2d(64, mdim_local, kernel_size=3, stride=1, padding=1)
         self.local_ResMM = ResBlock(mdim_local, mdim_local)
         self.pred_local = nn.Conv2d(mdim_local, 1, kernel_size=3, stride=1, padding=1)
         self.prelu = nn.PReLU()  # PReLU initialization for shared usage
+        # for latent representation
+        self.expand_z4 = nn.Linear(64, 1024*4*5)        
 
-    def forward(self, r4, r3, r2, r1, feature_shape):
+    def forward(self, r4, r3, r2, r1, z4, feature_shape):
         bs, _, h, w = feature_shape
         
         # Process global features
-        global_features = self.convFM(r4)
+        z4 = self.expand_z4(z4).view(-1, 1024, 4, 5)
+        r4z4 = match_and_add(r4, z4)
+        global_features = self.convFM(r4z4)
         global_features = self.ResMM(global_features)
+        
+        #z3 = self.expand_z3(z3).view(-1, 512, 8, 10)
+        #r3z3 = match_and_add(r3, z3)
         global_features = self.RF3(r3, global_features)
+        
+        #z2 = self.expand_z2(z2).view(-1, 256, 16, 19)
+        #r2z2 = match_and_add(r2, z2)
         global_features = self.RF2(r2, global_features)
         global_features = self.prelu(global_features)
         global_features = self.pred_global(global_features)
@@ -127,14 +155,22 @@ class Decoder(nn.Module):
         
         return output
 
-class AutoEncoder(nn.Module):
+class VAE(nn.Module):
     """
     Autoencoder that encodes input features and decodes them to generate regression output.
     """
     def __init__(self):
-        super(AutoEncoder, self).__init__()
+        super(VAE, self).__init__()
         self.encoder = Encoder()
         self.decoder = Decoder()
 
+    def reparameterize(self, mu, logvar):
+        std = [torch.exp(0.5 * lv) for lv in logvar]
+        eps = [torch.randn_like(s) for s in std]
+        z = [m + e * s for m, s, e in zip(mu, std, eps)]
+        return z
+
     def forward(self, x):
-        return self.decoder(*self.encoder(x), x.size())
+        r4, r3, r2, r1, mu, logvar = self.encoder(x)
+        z = self.reparameterize(mu, logvar)
+        return self.decoder(r4, r3, r2, r1, *z, x.size()), mu, logvar  # Pass latent variables and features to the decoder
