@@ -1,25 +1,23 @@
 dataset:
   paths:
-    input: ./dataset/train_input_April12.mat
-    target: ./dataset/train_target_April12.mat
-  format:
-    inputs: [X, Y, U, V]  # Input variable names.
-    target: h             # Target variable name.
-  output_size: 256        # Size of the output variable.
+    input: ./dataset/train_input.mat
+    target: ./dataset/train_target.mat
   channels:
-    input: 4
-    target: 1
+    input: 5
+    output: 1
 
 training:
-  max_epoch: 1000        # Total number of training epochs.
+  max_epoch: 2000        # Total number of training epochs.
   batch_size: 2           # Number of samples per batch.
-  regularization: 0.05    # Regularization factor for model training.
+  regularization: 0.5    # Regularization factor for model training.
   learning_rate: 0.0002    # Initial learning rate.
   scheduler:
     step_size: 200        # Learning rate scheduler step size.
     gamma: 0.8            # Learning rate decay factor.
   physics: True
   fidelity: True
+  phy_loss_coef: 1000
+  fid_loss_coef: 1
   patience: 1000
   
 environment:

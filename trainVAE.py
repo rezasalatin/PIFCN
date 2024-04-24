@@ -6,8 +6,8 @@ from scipy.io import loadmat, savemat
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 from config.read_yaml import ConfigLoader
-from models.VAE import VAE  # Updated to use the VAE model
-from models.physics import continuity_only as res_loss_fn
+from models.VAE_101 import VAE  # Updated to use the VAE model
+from models.physics import continuity_depthintegrated as res_loss_fn
 import myutils
 import argparse
 
@@ -25,13 +25,14 @@ class ConfigManager:
         self.environment_config = ConfigLoader(config_path, section='environment').get_value()
         self.physics_config = ConfigLoader(config_path, section='physics').get_value()
 
-
 class Trainer:
     def __init__(self, config_manager):
         self.config_manager = config_manager
         self.device = self._setup_device()
         self.set_seeds(self.config_manager.environment_config['seed'])
-        self.model = VAE().to(self.device)  # Use VAE instead of AutoEncoder
+        input_channels = self.config_manager.dataset_config['channels']['input']
+        output_channels = self.config_manager.dataset_config['channels']['output']
+        self.model = VAE(input_channels=input_channels, output_channels=output_channels).to(self.device)
         self.optimizer = self._setup_optimizer()
         self.fid_loss_fn = torch.nn.SmoothL1Loss().to(self.device)
         self.scheduler = self._setup_scheduler()
@@ -43,6 +44,7 @@ class Trainer:
         os.makedirs(self.model_dir, exist_ok=True)
         self.log_path = os.path.join(self.main_dir, 'training_log.txt')
         self._save_scripts()
+        self.best_loss = float('inf')  # Initialize best loss as infinity
 
     def _setup_device(self):
         gpu = self.config_manager.environment_config['gpu']
@@ -61,6 +63,19 @@ class Trainer:
         main_dir = os.path.join('logs', time.strftime('%Y%m%d-%H%M'))
         os.makedirs(main_dir, exist_ok=True)
         return main_dir
+    
+    def _save_best_model(self, epoch, avg_loss, avg_fid_loss, avg_res_loss):
+        improvement_threshold = 0.01  # 1% improvement
+        if avg_loss < self.best_loss * (1 - improvement_threshold):
+            self.best_loss = avg_loss
+            best_model_path = os.path.join(self.model_dir, 'best.pth')
+            torch.save({
+                'epoch': epoch,
+                'model_state': self.model.state_dict(),
+                'optimizer_state': self.optimizer.state_dict(),
+                'best_loss': self.best_loss
+            }, best_model_path)
+            print(f"Ep: {epoch}, Loss: {avg_loss:.4f}, FID Loss: {avg_fid_loss:.4f}, RES Loss: {avg_res_loss:.4f}, -Best Model")
 
     def _save_scripts(self):
         myutils.save_scripts(self.main_dir, scripts_to_save=glob('*.*'))
@@ -71,7 +86,7 @@ class Trainer:
 
     def _log_training_progress(self, epoch, avg_loss, avg_fid_loss, avg_res_loss):
         if epoch % 10 == 0:
-            print(f"Epoch: {epoch}, Avg Loss: {avg_loss:.4f}, Avg FID Loss: {avg_fid_loss:.4f}, Avg RES Loss: {avg_res_loss:.4f}")
+            print(f"Ep: {epoch}, Loss: {avg_loss:.4f}, FID Loss: {avg_fid_loss:.4f}, RES Loss: {avg_res_loss:.4f}")
 
     def _save_checkpoint(self, epoch, avg_loss):
         checkpoint = {
@@ -147,6 +162,7 @@ class Trainer:
         self._save_checkpoint(epoch+1, avg_loss)  # Save checkpoint with the average loss
         if last_preds is not None:
             self._save_predictions(epoch+1, last_preds)  # Save predictions for this epoch          
+        self._save_best_model(epoch+1, avg_loss, avg_fid_loss, avg_res_loss)  # Check and save the best model if needed
 
 
     def _calculate_loss(self, inputs, targets, preds, mu, logvar):
@@ -156,8 +172,9 @@ class Trainer:
 
         # Apply mask and calculate valid losses
         mask = torch.zeros_like(targets, dtype=torch.bool)
-        myutils.point_selector(mask, x_intv=4, y_intv=4, random=False, num_points=50)
-        targets[~mask] = torch.nan
+        #mask = torch.full_like(targets, torch.nan, dtype=torch.float)
+        myutils.point_selector(mask, x_intv=1, y_intv=1)
+        targets[mask] = torch.nan
         
         valid_mask = ~torch.isnan(preds) & ~torch.isnan(targets)
         preds_valid = preds[valid_mask]
@@ -165,23 +182,26 @@ class Trainer:
 
         # Fidelity loss
         if self.config_manager.training_config['fidelity']:
+            fid_loss_coef = self.config_manager.training_config['fid_loss_coef']
             # Binary Cross-Entropy Loss (BCE)
             BCE = self.fid_loss_fn(preds_valid, targets_valid)
             # KL divergence
             KLD = -0.5 * sum([torch.sum(1 + lv - m.pow(2) - lv.exp()) for m, lv in zip(mu, logvar)])
             fid_loss = BCE + KLD
-            loss += fid_loss
+            loss += fid_loss_coef*fid_loss
 
         # Physics-based loss
         if self.config_manager.training_config['physics']:
+            phy_loss_coef = self.config_manager.training_config['phy_loss_coef']
             batch_size = self.config_manager.training_config['batch_size']
             dx = self.config_manager.physics_config['dx']
             dy = self.config_manager.physics_config['dy']
             delta = self.config_manager.physics_config['huber_delta']
-            res_losses = [res_loss_fn(inputs[i,2:4,:,:].squeeze(), preds[i,:,:,:].squeeze(), dx, dy, delta) for i in range(batch_size)]
+            res_losses = [res_loss_fn(inputs[i,2:5,:,:].squeeze(), preds[i,:,:,:].squeeze(), dx, dy, delta) for i in range(batch_size)]
+            #res_losses = [res_loss_fn(preds[i,:,:,:].squeeze(), dx, dy, delta) for i in range(batch_size)]
             res_loss = torch.tensor(res_losses, device=self.device).mean()
-            res_loss = 100*res_loss
-            loss += res_loss
+            res_loss = res_loss
+            loss += phy_loss_coef*res_loss
 
         return loss, fid_loss, res_loss
 

@@ -122,31 +122,13 @@ def save_scripts_in_directories(directories, destination_dir):
                 shutil.copy(file_path, destination_path)
                 
 
-def point_selector(mask, x_intv=8, y_intv=32, random=False, num_points=50, seed=123):
+def point_selector(mask, x_intv=1, y_intv=1):
 
-    # Set a constant seed for reproducibility
-    np.random.seed(seed)
     _, _, H, W = mask.shape
-    
-    if not random:
-        # Regular pattern selection, including boundary points
-        mask[:, :, -1, ::x_intv] = True
-        mask[:, :, ::y_intv, -1] = True
-        mask[:, :, ::y_intv, ::x_intv] = True
-    else:
-        # Set boundary points
-        mask[:, :, 0, ::x_intv] = True
-        mask[:, :, -1, ::x_intv] = True
-        mask[:, :, ::y_intv, 0] = True
-        mask[:, :, ::y_intv, -1] = True
-        
-        # Generate random indices for the selected number of points within the interior
-        random_rows = np.random.randint(1, H - 1, num_points)
-        random_cols = np.random.randint(1, W - 1, num_points)
-
-        # Ensure random points do not overlap with boundary points
-        for i in range(num_points):
-            mask[:, :, random_rows[i], random_cols[i]] = True
+    # Regular pattern selection, including boundary points
+    mask[:, :, -1, ::x_intv] = False
+    mask[:, :, ::y_intv, -1] = False
+    mask[:, :, ::y_intv, ::x_intv] = False
 
     return mask
 

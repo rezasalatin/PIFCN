@@ -6,7 +6,7 @@ from scipy.io import loadmat, savemat
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 from config.read_yaml import ConfigLoader
-from models.VAE import VAE  # Updated to use the VAE model
+from models.VAE_101 import VAE
 import myutils
 import argparse
 
@@ -37,7 +37,9 @@ class Tester:
         return torch.device(f"cuda:{gpu}" if torch.cuda.is_available() and gpu >= 0 else "cpu")
     
     def _load_model(self):
-        model = VAE().to(self.device)
+        input_channels = self.config_manager.dataset_config['channels']['input']
+        output_channels = self.config_manager.dataset_config['channels']['output']
+        model = VAE(input_channels=input_channels, output_channels=output_channels).to(self.device)
         model_path = self.config_manager.test_config['model_path']
         # Load the entire checkpoint, not just the model state dictionary
         checkpoint = torch.load(model_path, map_location=self.device)

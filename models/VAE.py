@@ -47,13 +47,6 @@ class ResBlock(nn.Module):
         return self.prelu(out)
     
 class Refine(nn.Module):
-    """
-    Refinement module that upsamples and refines features using convolution and residual blocks.
-    
-    Parameters:
-    - inplanes (int): Number of input channels.
-    - planes (int): Number of output channels.
-    """
     def __init__(self, inplanes, planes):
         super(Refine, self).__init__()
         self.convFS = nn.Conv2d(inplanes, planes, kernel_size=3, stride=1, padding=1)
@@ -66,10 +59,10 @@ class Refine(nn.Module):
         return self.ResMM(m)
 
 class Encoder(nn.Module):
-    def __init__(self):
+    def __init__(self, input_channels=4):
         super(Encoder, self).__init__()
         resnet = resnet50(weights=ResNet50_Weights.IMAGENET1K_V1)
-        self.conv1 = nn.Conv2d(4, 64, kernel_size=7, stride=2, padding=(3, 2), bias=False)
+        self.conv1 = nn.Conv2d(input_channels, 64, kernel_size=7, stride=2, padding=(3, 2), bias=False)
         kaiming_normal_(self.conv1.weight, mode='fan_out', nonlinearity='relu')  # Adjusted for PReLU
         self.bn1 = resnet.bn1
         self.prelu = nn.PReLU()  # PReLU initialization
@@ -79,8 +72,8 @@ class Encoder(nn.Module):
         self.res4 = resnet.layer3
         #self.register_buffer('max_values', torch.tensor([33.0, 13.0, 0.23, 0.09]).view(1, 4, 1, 1))
         #self.register_buffer('min_values', torch.tensor([25.0, -13.0, -0.29, -0.11]).view(1, 4, 1, 1))
-        self.register_buffer('max_values', torch.tensor([240.0, 201.6, 0.647, 1.054]).view(1, 4, 1, 1))
-        self.register_buffer('min_values', torch.tensor([0.0, 0.0, -0.797, -1.655]).view(1, 4, 1, 1))
+        self.register_buffer('max_values', torch.tensor([240.0, 201.6, 0.528, 1.870, 6.25]).view(1, 5, 1, 1))
+        self.register_buffer('min_values', torch.tensor([0.0, 0.0, -0.718, -1.589, -6.25]).view(1, 5, 1, 1))
         
         # Initialize linear layers correctly based on the actual feature map sizes
         self.fc_mu = nn.ModuleList([
@@ -103,7 +96,7 @@ class Encoder(nn.Module):
         return r4, r3, r2, x, mu, logvar
 
 class Decoder(nn.Module):
-    def __init__(self):
+    def __init__(self, output_channels=1):
         super(Decoder, self).__init__()
         mdim_global, mdim_local = 256, 32
         self.convFM = nn.Conv2d(1024, mdim_global, kernel_size=3, stride=1, padding=1)
@@ -112,8 +105,7 @@ class Decoder(nn.Module):
         self.RF3 = Refine(512, mdim_global)
         self.RF2 = Refine(256, mdim_global)
         self.pred_global = nn.Conv2d(mdim_global, 1, kernel_size=3, stride=1, padding=1)
-        ## here determine the number of output channels in the second parameter
-        self.convGL = nn.Conv2d(2, 1, kernel_size=3, stride=1, padding=1)
+        self.convGL = nn.Conv2d(2, output_channels, kernel_size=3, stride=1, padding=1)
         kaiming_normal_(self.convGL.weight, mode='fan_out', nonlinearity='relu')  # Adjusted for PReLU
         self.local_convFM = nn.Conv2d(64, mdim_local, kernel_size=3, stride=1, padding=1)
         self.local_ResMM = ResBlock(mdim_local, mdim_local)
@@ -159,10 +151,10 @@ class VAE(nn.Module):
     """
     Autoencoder that encodes input features and decodes them to generate regression output.
     """
-    def __init__(self):
+    def __init__(self, input_channels=4, output_channels=1):
         super(VAE, self).__init__()
-        self.encoder = Encoder()
-        self.decoder = Decoder()
+        self.encoder = Encoder(input_channels=input_channels)
+        self.decoder = Decoder(output_channels=output_channels)
 
     def reparameterize(self, mu, logvar):
         std = [torch.exp(0.5 * lv) for lv in logvar]

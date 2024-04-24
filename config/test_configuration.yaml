@@ -1,15 +1,15 @@
 dataset:
   paths:
-    input: ./dataset/test_input_April11.mat
-    target: ./dataset/test_target_April11.mat
-  format:
-    inputs: [X, Y, U, V]  # Input variable names.
-    output: [U, V]             # Target variable name.
+    input: ./dataset/test_input.mat
+    target: ./dataset/test_target.mat
+  channels:
+    input: 5
+    output: 1
 
 test:
   batch_size: 1           # Number of samples per batch.
-  model_path: ./logs/20240411-2331/model/checkpoint_epoch_600.pth
-  results_dir: ./dataset/
+  model_path: ./logs/20240424-1512/model/best.pth
+  results_dir: ./logs/20240424-1512/
 
 environment:
   gpu: 0                  # Identifier for the GPU to use.
