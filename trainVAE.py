@@ -6,8 +6,8 @@ from scipy.io import loadmat, savemat
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 from config.read_yaml import ConfigLoader
-from models.VAE_101 import VAE  # Updated to use the VAE model
-from models.physics import continuity_depthintegrated as res_loss_fn
+from models.VAE_101 import VAE
+from models.physics import continuity as res_loss_fn
 import myutils
 import argparse
 
@@ -88,7 +88,7 @@ class Trainer:
         if epoch % 10 == 0:
             print(f"Ep: {epoch}, Loss: {avg_loss:.4f}, FID Loss: {avg_fid_loss:.4f}, RES Loss: {avg_res_loss:.4f}")
 
-    def _save_checkpoint(self, epoch, avg_loss):
+    def _save_checkpoint(self, epoch, avg_loss, avg_fid_loss, avg_res_loss):
         checkpoint = {
             'epoch': epoch,
             'model_state': self.model.state_dict(),
@@ -100,7 +100,7 @@ class Trainer:
             print(f'Saved model for epoch {epoch}')
 
         with open(self.log_path, 'a') as log_file:
-            log_file.write(f'Epoch: {epoch}, Average Loss: {avg_loss:.5f}\n')
+            log_file.write(f"Ep: {epoch}, Loss: {avg_loss:.6f}, FID Loss: {avg_fid_loss:.6f}, RES Loss: {avg_res_loss:.6f}\n")
 
     def _save_predictions(self, epoch, predictions):
         savemat(os.path.join(self.model_dir, f'predictions_epoch_{epoch}.mat'), {'predictions': predictions})
@@ -159,7 +159,7 @@ class Trainer:
         # Log the average losses
         self._log_training_progress(epoch + 1, avg_loss, avg_fid_loss, avg_res_loss)
 
-        self._save_checkpoint(epoch+1, avg_loss)  # Save checkpoint with the average loss
+        self._save_checkpoint(epoch+1, avg_loss, avg_fid_loss, avg_res_loss)  # Save checkpoint with the average loss
         if last_preds is not None:
             self._save_predictions(epoch+1, last_preds)  # Save predictions for this epoch          
         self._save_best_model(epoch+1, avg_loss, avg_fid_loss, avg_res_loss)  # Check and save the best model if needed
@@ -197,8 +197,8 @@ class Trainer:
             dx = self.config_manager.physics_config['dx']
             dy = self.config_manager.physics_config['dy']
             delta = self.config_manager.physics_config['huber_delta']
-            res_losses = [res_loss_fn(inputs[i,2:5,:,:].squeeze(), preds[i,:,:,:].squeeze(), dx, dy, delta) for i in range(batch_size)]
-            #res_losses = [res_loss_fn(preds[i,:,:,:].squeeze(), dx, dy, delta) for i in range(batch_size)]
+            #res_losses = [res_loss_fn(inputs[i,2:5,:,:].squeeze(), preds[i,:,:,:].squeeze(), dx, dy, delta) for i in range(batch_size)]
+            res_losses = [res_loss_fn(preds[i,:,:,:].squeeze(), dx, dy, delta) for i in range(batch_size)]
             res_loss = torch.tensor(res_losses, device=self.device).mean()
             res_loss = res_loss
             loss += phy_loss_coef*res_loss

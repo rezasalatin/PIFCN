@@ -1,10 +1,10 @@
 dataset:
   paths:
-    input: ./dataset/train_input.mat
-    target: ./dataset/train_target.mat
+    input: ./dataset/train_input_uv.mat
+    target: ./dataset/train_target_uv.mat
   channels:
-    input: 5
-    output: 1
+    input: 4
+    output: 2
 
 training:
   max_epoch: 2000        # Total number of training epochs.
@@ -16,7 +16,7 @@ training:
     gamma: 0.8            # Learning rate decay factor.
   physics: True
   fidelity: True
-  phy_loss_coef: 1000
+  phy_loss_coef: 1
   fid_loss_coef: 1
   patience: 1000
   

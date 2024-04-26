@@ -72,11 +72,11 @@ class Encoder(nn.Module):
         self.res4 = resnet.layer3
         self.res5 = resnet.layer4  # Additional layer in ResNet-101
 
-        self.register_buffer('max_values', torch.tensor([240.0, 201.6, 0.528, 1.870, 6.25]).view(1, 5, 1, 1))
-        self.register_buffer('min_values', torch.tensor([0.0, 0.0, -0.718, -1.589, -6.25]).view(1, 5, 1, 1))
+        #self.register_buffer('max_values', torch.tensor([240.0, 201.6, 0.528, 1.870, 6.25]).view(1, 5, 1, 1))
+        #self.register_buffer('min_values', torch.tensor([0.0, 0.0, -0.718, -1.589, -6.25]).view(1, 5, 1, 1))
 
-        #self.register_buffer('max_values', torch.tensor([240.0, 201.6, 0.528, 1.870]).view(1, 4, 1, 1))
-        #self.register_buffer('min_values', torch.tensor([0.0, 0.0, -0.718, -1.589]).view(1, 4, 1, 1))
+        self.register_buffer('max_values', torch.tensor([240.0, 201.6, 0.528, 1.870]).view(1, 4, 1, 1))
+        self.register_buffer('min_values', torch.tensor([0.0, 0.0, -0.718, -1.589]).view(1, 4, 1, 1))
         
         # Initialize linear layers correctly based on the actual feature map sizes
         self.fc_mu = nn.ModuleList([

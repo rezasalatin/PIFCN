@@ -106,3 +106,36 @@ def continuity(inputs, dx, dy, delta=1.0):
     loss = continuity_equation_loss_huber(residuals, delta)
 
     return loss
+
+###########################################################
+def continuity_aio(inputs, dx, dy, delta=1.0):
+    
+    h = inputs[0, :, :].squeeze()
+    U = inputs[1, :, :].squeeze()
+    V = inputs[2, :, :].squeeze()
+
+    h = -h
+
+    #hx, hy = compute_autograd(h, x), compute_autograd(h, y)
+    hx, hy = compute_gradients(h, dx, dy)
+    Ux, _ = compute_gradients(U, dx, dy)
+    _, Vy = compute_gradients(V, dx, dy)
+
+    # Create a mask for non-NaN values
+    valid_mask = ~torch.isnan(h) & \
+            ~torch.isnan(U) & ~torch.isnan(V) & \
+            ~torch.isnan(Ux) & ~torch.isnan(Vy)
+            
+    # Apply the mask to all variables
+    U, V = U[valid_mask], V[valid_mask]
+    Ux = Ux[valid_mask]
+    Vy = Vy[valid_mask]
+    h, hx, hy = h[valid_mask], hx[valid_mask], hy[valid_mask]
+
+    # Calculate the residuals for the continuity equation
+    residuals = (hx*U + Ux*h + hy*V + Vy*h)
+
+    # Continuity equation loss
+    loss = continuity_equation_loss_huber(residuals, delta)
+
+    return loss
