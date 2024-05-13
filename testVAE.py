@@ -6,7 +6,7 @@ from scipy.io import loadmat, savemat
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 from config.read_yaml import ConfigLoader
-from models.VAE_101 import VAE
+from models.vae_res101 import VAE
 import myutils
 import argparse
 

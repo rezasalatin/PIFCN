@@ -5,15 +5,17 @@ from glob import glob
 from scipy.io import loadmat, savemat
 import torch
 from torch.utils.data import DataLoader, TensorDataset
+import torch.nn.functional as F
 from config.read_yaml import ConfigLoader
-from models.vae_res101 import VAE
+from models.VAE_Res50_PConv import VAE
 from models.physics import continuity as res_loss_fn
+from models.loss_calculator_pconv import LossCalculator
 import myutils
 import argparse
 
 def get_args():
     parser = argparse.ArgumentParser(description='Train')
-    parser.add_argument('--config-path', type=str, default='config/training_configuration.yaml',
+    parser.add_argument('--config-path', type=str, default='config/training_configuration_pconv.yaml',
                         help='Config path.')
     return parser.parse_args()
 
@@ -45,6 +47,7 @@ class Trainer:
         self.log_path = os.path.join(self.main_dir, 'training_log.txt')
         self._save_scripts()
         self.best_loss = float('inf')  # Initialize best loss as infinity
+        self.loss_calculator = LossCalculator(self.device)
 
     def _setup_device(self):
         gpu = self.config_manager.environment_config['gpu']
@@ -133,11 +136,19 @@ class Trainer:
         last_preds = None  # Initialize to store last batch predictions
 
         for iter_idx, (inputs, targets) in enumerate(self.dataloader):
-            inputs, targets = inputs.to(self.device), targets.to(self.device)            
-            preds, mu, logvar = self.model(inputs)
+            inputs, targets = inputs.to(self.device), targets.to(self.device)    
+
+            ### PConv
+            # Create a mask where NaNs are 0 and non-NaNs are 1
+            masks = torch.isnan(inputs)
+            masks = ~masks  # Invert mask: True where x is valid, False where x is NaN
+            masks = masks.float()  # Convert boolean mask to float
+
+            preds, mu, logvar = self.model(inputs, masks)
             
             self.optimizer.zero_grad()
-            loss, fid_loss, res_loss = self._calculate_loss(inputs, targets, preds, mu, logvar)
+            loss_pconv = self.loss_calculator.combined_loss(targets, preds, masks)
+            loss, fid_loss, res_loss = self._calculate_loss(targets, preds, mu, logvar)
             loss.backward()
             self.optimizer.step()
 
@@ -165,14 +176,13 @@ class Trainer:
         self._save_best_model(epoch+1, avg_loss, avg_fid_loss, avg_res_loss)  # Check and save the best model if needed
 
 
-    def _calculate_loss(self, inputs, targets, preds, mu, logvar):
-        loss = 0.0  # Initialize loss for this batch
+    def _calculate_loss(self, targets, preds, mu, logvar):
+        loss = 0.0
         fid_loss = 0.0
         res_loss = 0.0
 
         # Apply mask and calculate valid losses
         mask = torch.zeros_like(targets, dtype=torch.bool)
-        #mask = torch.full_like(targets, torch.nan, dtype=torch.float)
         myutils.point_selector(mask, x_intv=1, y_intv=1)
         targets[mask] = torch.nan
         
@@ -197,7 +207,6 @@ class Trainer:
             dx = self.config_manager.physics_config['dx']
             dy = self.config_manager.physics_config['dy']
             delta = self.config_manager.physics_config['huber_delta']
-            #res_losses = [res_loss_fn(inputs[i,2:5,:,:].squeeze(), preds[i,:,:,:].squeeze(), dx, dy, delta) for i in range(batch_size)]
             res_losses = [res_loss_fn(preds[i,:,:,:].squeeze(), dx, dy, delta) for i in range(batch_size)]
             res_loss = torch.tensor(res_losses, device=self.device).mean()
             res_loss = res_loss
