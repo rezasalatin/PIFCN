@@ -1,18 +1,20 @@
+
+#Standard Library Imports
 import os
 import time
-import numpy as np
+import argparse
 from glob import glob
+#Third-Party Imports
 from scipy.io import loadmat, savemat
 import torch
 from torch.utils.data import DataLoader, TensorDataset
+#Local Application/Library Specific Imports
 from config.read_yaml import ConfigLoader
-from models.AE_Res50_twostep import AutoEncoder
-import myutils
-import argparse
+from models.vae_res101 import VAE
 
 def get_args():
     parser = argparse.ArgumentParser(description='Test')
-    parser.add_argument('--config-path', type=str, default='config/test_configuration.yaml',
+    parser.add_argument('--config-path', type=str, default='config/test_config.yaml',
                         help='Config path.')
     return parser.parse_args()
 
@@ -27,8 +29,9 @@ class Tester:
     def __init__(self, config_manager):
         self.config_manager = config_manager
         self.device = self._setup_device()
-        self.model = self._load_model()
-        self.dataloader = self._setup_dataloader()
+        self.dataloader = self._setup_dataloader()  # Setup dataloader before model initialization
+        self.model = self._initialize_model()  # Initialize model after setting up dataloader
+        self._load_model()  # Load model weights after initializing model
         self.fid_loss_fn = torch.nn.SmoothL1Loss().to(self.device)
         self.model.eval()  # Set model to evaluation mode
 
@@ -36,15 +39,26 @@ class Tester:
         gpu = self.config_manager.environment_config['gpu']
         return torch.device(f"cuda:{gpu}" if torch.cuda.is_available() and gpu >= 0 else "cpu")
     
-    def _load_model(self):
-        model = AutoEncoder().to(self.device)
-        model_path = self.config_manager.test_config['model_path']
-        # Load the entire checkpoint, not just the model state dictionary
-        checkpoint = torch.load(model_path, map_location=self.device)
-        # Extract the model state dictionary
-        model_state_dict = checkpoint['model_state']
-        model.load_state_dict(model_state_dict)
+    def _initialize_model(self):
+        input_channels = self.config_manager.dataset_config['channels']['input']
+        output_channels = self.config_manager.dataset_config['channels']['output']
+        model = VAE(input_channels=input_channels, output_channels=output_channels).to(self.device)
+
+        # Use the first batch from the dataloader to determine the feature map size
+        for inputs, _ in self.dataloader:
+            inputs = inputs.to(self.device)
+            with torch.no_grad():
+                # Forward pass to initialize decoder and obtain feature_map_size
+                model(inputs)
+            break  # Only need the first batch
+
         return model
+    
+    def _load_model(self):
+        model_path = self.config_manager.test_config['model_path']
+        checkpoint = torch.load(model_path, map_location=self.device)
+        model_state_dict = checkpoint['model_state']
+        self.model.load_state_dict(model_state_dict)
 
     def _setup_dataloader(self):
         input_data = loadmat(self.config_manager.dataset_config['paths']['input'])['test_input']
@@ -60,30 +74,28 @@ class Tester:
         for inputs, targets in self.dataloader:
             inputs, targets = inputs.to(self.device), targets.to(self.device)
             with torch.no_grad():
-                preds = self.model(inputs)
-                all_predictions.append(preds.cpu())  # Append predictions to the list
+                # Obtain outputs from the model; assuming preds is a tuple and the first item is the actual predictions
+                preds, _, _ = self.model(inputs)
+                # Move predictions to CPU and append to list; accessing [0] directly as preds should be the desired tensor now
+                all_predictions.append(preds.cpu())
 
         # Concatenate all batch predictions into a single tensor
         all_predictions = torch.cat(all_predictions, dim=0)
-
         # Convert the tensor to a numpy array
         all_predictions_np = all_predictions.numpy()
-
         # Define the path where you want to save the predictions
         predictions_path = os.path.join(self.config_manager.test_config['results_dir'], 'all_predictions.mat')
-        
         # Ensure the directory exists
         os.makedirs(os.path.dirname(predictions_path), exist_ok=True)
-
         # Save the predictions to a .mat file
         savemat(predictions_path, {'predictions': all_predictions_np})
-
-        print(f'All predictions saved to {predictions_path}')
+        print(f'Predictions saved to {predictions_path}')
 
 def main():
     args = get_args()
     config_manager = ConfigManager(args.config_path)
     tester = Tester(config_manager)
+    tester._load_model()
     tester.evaluate()
 
 if __name__ == '__main__':

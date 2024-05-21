@@ -17,9 +17,6 @@ def match_and_add(tensor_a, tensor_b):
     return tensor_a + tensor_b_upsampled
 
 class ResBlock(nn.Module):
-    """
-    A residual block that performs two convolutions followed by a residual connection.
-    """
     def __init__(self, indim, outdim=None, stride=1):
         super(ResBlock, self).__init__()
         outdim = outdim or indim
@@ -62,7 +59,7 @@ class Encoder(nn.Module):
     def __init__(self, input_channels=4):
         super(Encoder, self).__init__()
         resnet = resnet50(weights=ResNet50_Weights.IMAGENET1K_V1)
-        self.conv1 = nn.Conv2d(input_channels, 64, kernel_size=7, stride=2, padding=(3, 2), bias=False)
+        self.conv1 = nn.Conv2d(input_channels, 64, kernel_size=7, stride=2, padding=3, bias=False)
         kaiming_normal_(self.conv1.weight, mode='fan_out', nonlinearity='relu')  # Adjusted for PReLU
         self.bn1 = resnet.bn1
         self.prelu = nn.PReLU()  # PReLU initialization
@@ -75,13 +72,8 @@ class Encoder(nn.Module):
         self.register_buffer('max_values', torch.tensor([240.0, 201.6, 0.528, 1.870, 6.25]).view(1, 5, 1, 1))
         self.register_buffer('min_values', torch.tensor([0.0, 0.0, -0.718, -1.589, -6.25]).view(1, 5, 1, 1))
         
-        # Initialize linear layers correctly based on the actual feature map sizes
-        self.fc_mu = nn.ModuleList([
-            nn.Linear(1024*4*5, 64)      # Input dimensions for r4
-        ])
-        self.fc_logvar = nn.ModuleList([
-            nn.Linear(1024*4*5, 64)
-        ])
+        self.fc_mu = None
+        self.fc_logvar = None
 
     def forward(self, in_f):
         f = (in_f - self.min_values) / (self.max_values - self.min_values)        
@@ -89,17 +81,26 @@ class Encoder(nn.Module):
         r2 = self.res2(x)
         r3 = self.res3(r2)
         r4 = self.res4(r3)
+
+        flat_features = r4.flatten(start_dim=1)
+        feature_size = flat_features.shape[1]  # Dynamically get the size
+
+        # Dynamic size for fully connected layers
+        if not hasattr(self, 'fc_mu'):
+            self.fc_mu = nn.Linear(feature_size, 64).to(r4.device)
+            self.fc_logvar = nn.Linear(feature_size, 64).to(r4.device)
         
-        mu = [self.fc_mu[0](r4.flatten(start_dim=1))]
-        logvar = [self.fc_logvar[0](r4.flatten(start_dim=1))]
+        mu = self.fc_mu(flat_features)
+        logvar = self.fc_logvar(flat_features)
         
-        return r4, r3, r2, x, mu, logvar
+        return r4, r3, r2, x, mu, logvar, r4.shape
 
 class Decoder(nn.Module):
-    def __init__(self, output_channels=1):
+    def __init__(self, output_channels=1, feature_map_size=None):
         super(Decoder, self).__init__()
         mdim_global, mdim_local = 256, 32
-        self.convFM = nn.Conv2d(1024, mdim_global, kernel_size=3, stride=1, padding=1)
+        self.feature_map_size = feature_map_size
+        self.convFM = nn.Conv2d(feature_map_size[0], mdim_global, kernel_size=3, stride=1, padding=1)
         kaiming_normal_(self.convFM.weight, mode='fan_out', nonlinearity='relu')  # Adjusted for PReLU
         self.ResMM = ResBlock(mdim_global, mdim_global)
         self.RF3 = Refine(512, mdim_global)
@@ -111,24 +112,23 @@ class Decoder(nn.Module):
         self.local_ResMM = ResBlock(mdim_local, mdim_local)
         self.pred_local = nn.Conv2d(mdim_local, 1, kernel_size=3, stride=1, padding=1)
         self.prelu = nn.PReLU()  # PReLU initialization for shared usage
+
         # for latent representation
-        self.expand_z4 = nn.Linear(64, 1024*4*5)        
+        if feature_map_size:
+            output_size = feature_map_size[0] * feature_map_size[1] * feature_map_size[2]
+            self.expand_z4 = nn.Linear(64, output_size)
 
     def forward(self, r4, r3, r2, r1, z4, feature_shape):
         bs, _, h, w = feature_shape
         
         # Process global features
-        z4 = self.expand_z4(z4).view(-1, 1024, 4, 5)
+        z4 = self.expand_z4(z4).view(-1, 1024, h//8, w//8)
         r4z4 = match_and_add(r4, z4)
         global_features = self.convFM(r4z4)
         global_features = self.ResMM(global_features)
         
-        #z3 = self.expand_z3(z3).view(-1, 512, 8, 10)
-        #r3z3 = match_and_add(r3, z3)
         global_features = self.RF3(r3, global_features)
         
-        #z2 = self.expand_z2(z2).view(-1, 256, 16, 19)
-        #r2z2 = match_and_add(r2, z2)
         global_features = self.RF2(r2, global_features)
         global_features = self.prelu(global_features)
         global_features = self.pred_global(global_features)
@@ -154,7 +154,13 @@ class VAE(nn.Module):
     def __init__(self, input_channels=4, output_channels=1):
         super(VAE, self).__init__()
         self.encoder = Encoder(input_channels=input_channels)
-        self.decoder = Decoder(output_channels=output_channels)
+        self.decoder = None
+
+    def initialize_decoder(self, input_size):
+        # Create a dummy input to initialize and obtain feature_map_size
+        dummy_input = torch.rand(1, self.encoder.input_channels, *input_size)
+        _, _, _, _, _, _, feature_map_size = self.encoder(dummy_input)
+        self.decoder = Decoder(output_channels=1, feature_map_size=feature_map_size)
 
     def reparameterize(self, mu, logvar):
         std = [torch.exp(0.5 * lv) for lv in logvar]
@@ -163,6 +169,9 @@ class VAE(nn.Module):
         return z
 
     def forward(self, x):
-        r4, r3, r2, r1, mu, logvar = self.encoder(x)
+        r4, r3, r2, r1, mu, logvar, _ = self.encoder(x)
         z = self.reparameterize(mu, logvar)
-        return self.decoder(r4, r3, r2, r1, *z, x.size()), mu, logvar  # Pass latent variables and features to the decoder
+        if self.decoder:
+            return self.decoder(r4, r3, r2, r1, z, x.size()), mu, logvar
+        else:
+            raise RuntimeError("Decoder is not initialized. Call initialize_decoder first.")

@@ -1,20 +1,22 @@
+#Standard Library Imports
 import os
 import time
-import numpy as np
+import argparse
 from glob import glob
+#Third-Party Imports
+import numpy as np
 from scipy.io import loadmat, savemat
 import torch
 from torch.utils.data import DataLoader, TensorDataset
+#Local Application/Library Specific Imports
 from config.read_yaml import ConfigLoader
-from models.AE_Res50_twostep import AutoEncoder
-from models.physics import continuity_only as res_loss_fn
+from models.vae_res101 import VAE
+from models.physics import continuity_h as res_loss_fn
 import myutils
-import argparse
 
 def get_args():
-    parser = argparse.ArgumentParser(description='Train')
-    parser.add_argument('--config-path', type=str, default='config/training_configuration.yaml',
-                        help='Config path.')
+    parser = argparse.ArgumentParser(description='Train a VAE model.')
+    parser.add_argument('--config-path', type=str, default='config/train_config.yaml', help='Path to the configuration file.')
     return parser.parse_args()
 
 class ConfigManager:
@@ -24,24 +26,18 @@ class ConfigManager:
         self.training_config = ConfigLoader(config_path, section='training').get_value()
         self.environment_config = ConfigLoader(config_path, section='environment').get_value()
         self.physics_config = ConfigLoader(config_path, section='physics').get_value()
-        
+
 class Trainer:
     def __init__(self, config_manager):
         self.config_manager = config_manager
         self.device = self._setup_device()
         self.set_seeds(self.config_manager.environment_config['seed'])
-        self.model = AutoEncoder().to(self.device)
+        self.model = self._setup_model()
         self.optimizer = self._setup_optimizer()
         self.fid_loss_fn = torch.nn.SmoothL1Loss().to(self.device)
         self.scheduler = self._setup_scheduler()
         self.dataloader = self._setup_dataloader()
-        self.model.train()
-        self.model.apply(myutils.set_bn_eval)  # turn-off BN
-        self.main_dir = self._setup_logging_directory()
-        self.model_dir = os.path.join(self.main_dir, 'model')
-        os.makedirs(self.model_dir, exist_ok=True)
-        self.log_path = os.path.join(self.main_dir, 'training_log.txt')
-        self._save_scripts()
+        self._prepare_for_training()
 
     def _setup_device(self):
         gpu = self.config_manager.environment_config['gpu']
@@ -54,44 +50,16 @@ class Trainer:
         np.random.seed(seed_value)
         print(f"Seeds set to: {seed_value}")
 
-    def _setup_logging_directory(self):
-        if not os.path.exists('logs'):
-            os.makedirs('logs')
-        main_dir = os.path.join('logs', time.strftime('%Y%m%d-%H%M'))
-        os.makedirs(main_dir, exist_ok=True)
-        return main_dir
-    
-    def _save_scripts(self):
-        myutils.save_scripts(self.main_dir, scripts_to_save=glob('*.*'))
-        myutils.save_scripts(self.main_dir, scripts_to_save=glob('config/*.*', recursive=True))
-        myutils.save_scripts(self.main_dir, scripts_to_save=glob('dataset/*.py', recursive=True))
-        myutils.save_scripts(self.main_dir, scripts_to_save=glob('models/*.py', recursive=True))
-        myutils.save_scripts(self.main_dir, scripts_to_save=glob('myutils/*.py', recursive=True))
-
-    def _log_training_progress(self, epoch, avg_loss, avg_fid_loss, avg_res_loss):
-        if epoch % 10 == 0:
-            print(f"Epoch: {epoch}, Avg Loss: {avg_loss:.4f}, Avg FID Loss: {avg_fid_loss:.4f}, Avg RES Loss: {avg_res_loss:.4f}")
-
-    def _save_checkpoint(self, epoch, avg_loss):
-        checkpoint = {
-            'epoch': epoch,
-            'model_state': self.model.state_dict(),
-            'optimizer_state': self.optimizer.state_dict(),
-            'avg_loss': avg_loss
-        }
-        if epoch % 200 == 0:
-            torch.save(checkpoint, os.path.join(self.model_dir, f'checkpoint_epoch_{epoch}.pth'))
-            print(f'Saved model for epoch {epoch}')
-
-        with open(self.log_path, 'a') as log_file:
-            log_file.write(f'Epoch: {epoch}, Average Loss: {avg_loss:.5f}\n')
-
-    def _save_predictions(self, epoch, predictions):
-        savemat(os.path.join(self.model_dir, f'predictions_epoch_{epoch}.mat'), {'predictions': predictions})
-        print(f'Saved predictions for epoch {epoch}')
+    def _setup_model(self):
+        input_channels = self.config_manager.dataset_config['channels']['input']
+        output_channels = self.config_manager.dataset_config['channels']['output']
+        model = VAE(input_channels=input_channels, output_channels=output_channels).to(self.device)
+        model.train()
+        model.apply(myutils.set_bn_eval)
+        return model
 
     def _setup_optimizer(self):
-        return torch.optim.AdamW(filter(lambda x: x.requires_grad, self.model.parameters()),
+        return torch.optim.AdamW(filter(lambda p: p.requires_grad, self.model.parameters()),
                                  lr=self.config_manager.training_config['learning_rate'],
                                  weight_decay=self.config_manager.training_config['regularization'])
 
@@ -109,78 +77,121 @@ class Trainer:
         dataset = TensorDataset(input_tensor, target_tensor)
         return DataLoader(dataset, batch_size=self.config_manager.training_config['batch_size'], shuffle=True, drop_last=True, num_workers=2, pin_memory=True)
 
-    def train_epoch(self, epoch):
-        stats_loss = myutils.AvgMeter()
-        stats_fid_loss = myutils.AvgMeter()
-        stats_res_loss = myutils.AvgMeter()
+    def _prepare_for_training(self):
+        self.main_dir = self._setup_logging_directory()
+        self.model_dir = os.path.join(self.main_dir, 'model')
+        os.makedirs(self.model_dir, exist_ok=True)
+        self.log_path = os.path.join(self.main_dir, 'training_log.txt')
+        self._save_scripts()
+        self.best_loss = float('inf')
 
-        last_preds = None  # Initialize to store last batch predictions
+    def _setup_logging_directory(self):
+        if not os.path.exists('logs'):
+            os.makedirs('logs')
+        main_dir = os.path.join('logs', time.strftime('%Y%m%d-%H%M'))
+        os.makedirs(main_dir, exist_ok=True)
+        return main_dir
 
-        for iter_idx, (inputs, targets) in enumerate(self.dataloader):
-            inputs, targets = inputs.to(self.device), targets.to(self.device)            
-            preds = self.model(inputs)
-            
-            slice1 = inputs[0:1, 2:3, :, :].detach().cpu().numpy().squeeze()
-            slice2 = preds[0:1, 0:1, :, :].detach().cpu().numpy().squeeze()
-            
-            self.optimizer.zero_grad()
-            loss, fid_loss, res_loss = self._calculate_loss(inputs, targets, preds)
-            loss.backward()
-            self.optimizer.step()
+    def _save_scripts(self):
+        scripts_to_save = glob('*.*') + glob('config/*.*', recursive=True) + glob('dataset/*.py', recursive=True) + glob('models/*.py', recursive=True) + glob('myutils/*.py', recursive=True)
+        myutils.save_scripts(self.main_dir, scripts_to_save=scripts_to_save)
 
-            # Update the AvgMeters
-            stats_loss.update(loss.item())
-            if self.config_manager.training_config['fidelity']:
-                stats_fid_loss.update(fid_loss.item())
-            if self.config_manager.training_config['physics']:
-                stats_res_loss.update(res_loss.item())
+    def _log_training_progress(self, epoch, avg_loss, avg_fid_loss, avg_res_loss):
+        if epoch % 10 == 0:
+            print(f"Epoch: {epoch}, Loss: {avg_loss:.4f}, FID Loss: {avg_fid_loss:.4f}, RES Loss: {avg_res_loss:.4f}")
 
-            if (epoch+1) % 200 == 0:
-                last_preds = preds.detach().cpu().numpy()
+    def _save_checkpoint(self, epoch, avg_loss, avg_fid_loss, avg_res_loss):
+        checkpoint = {
+            'epoch': epoch,
+            'model_state': self.model.state_dict(),
+            'optimizer_state': self.optimizer.state_dict(),
+            'avg_loss': avg_loss
+        }
+        if epoch % 200 == 0:
+            torch.save(checkpoint, os.path.join(self.model_dir, f'checkpoint_epoch_{epoch}.pth'))
+            print(f'Saved model checkpoint for epoch {epoch}')
 
-        # Get the average losses for the epoch
-        avg_loss = stats_loss.avg
-        avg_fid_loss = stats_fid_loss.avg
-        avg_res_loss = stats_res_loss.avg
+        with open(self.log_path, 'a') as log_file:
+            log_file.write(f"Epoch: {epoch}, Loss: {avg_loss:.6f}, FID Loss: {avg_fid_loss:.6f}, RES Loss: {avg_res_loss:.6f}\n")
 
-        # Log the average losses
-        self._log_training_progress(epoch + 1, avg_loss, avg_fid_loss, avg_res_loss)
+    def _save_predictions(self, epoch, predictions):
+        savemat(os.path.join(self.model_dir, f'predictions_epoch_{epoch}.mat'), {'predictions': predictions})
+        print(f'Saved predictions for epoch {epoch}')
 
-        self._save_checkpoint(epoch+1, avg_loss)  # Save checkpoint with the average loss
-        if last_preds is not None:
-            self._save_predictions(epoch+1, last_preds)  # Save predictions for this epoch          
+    def _save_best_model(self, epoch, avg_loss, avg_fid_loss, avg_res_loss):
+        improvement_threshold = 0.01
+        if avg_loss < self.best_loss * (1 - improvement_threshold):
+            self.best_loss = avg_loss
+            best_model_path = os.path.join(self.model_dir, 'best.pth')
+            torch.save({
+                'epoch': epoch,
+                'model_state': self.model.state_dict(),
+                'optimizer_state': self.optimizer.state_dict(),
+                'best_loss': self.best_loss
+            }, best_model_path)
+            print(f"Epoch: {epoch}, Loss: {avg_loss:.4f}, FID Loss: {avg_fid_loss:.4f}, RES Loss: {avg_res_loss:.4f} - Best Model Saved")
 
+    def _calculate_loss(self, inputs, targets, preds, mu, logvar):
+        loss = 0.0
+        fid_loss = torch.tensor(float('nan'), device=self.device)
+        res_loss = torch.tensor(float('nan'), device=self.device)
 
-    def _calculate_loss(self, inputs, targets, preds):
-        loss = 0.0  # Initialize loss for this batch
-        fid_loss = 0.0
-        res_loss = 0.0
-
-        # Apply mask and calculate valid losses
-        mask = torch.zeros_like(targets, dtype=torch.bool)
-        myutils.point_selector(mask, x_intv=1, y_intv=1, random=False, num_points=50)
-        targets[~mask] = torch.nan
-        
-        valid_mask = ~torch.isnan(preds) & ~torch.isnan(targets)
+        valid_mask = ~torch.isnan(targets)
         preds_valid = preds[valid_mask]
         targets_valid = targets[valid_mask]
 
-        # Fidelity loss
         if self.config_manager.training_config['fidelity']:
-            fid_loss = self.fid_loss_fn(preds_valid, targets_valid)
-            loss += fid_loss
+            fid_loss_coef = self.config_manager.training_config['fid_loss_coef']
+            BCE = self.fid_loss_fn(preds_valid, targets_valid)
+            KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+            fid_loss = BCE + KLD
+            fid_loss = fid_loss_coef * fid_loss
+            loss += fid_loss_coef * fid_loss
 
-        # Physics-based loss
         if self.config_manager.training_config['physics']:
+            phy_loss_coef = self.config_manager.training_config['phy_loss_coef']
             batch_size = self.config_manager.training_config['batch_size']
             dx = self.config_manager.physics_config['dx']
             dy = self.config_manager.physics_config['dy']
             delta = self.config_manager.physics_config['huber_delta']
-            res_losses = [res_loss_fn(inputs[i,:,:,:].squeeze(), preds[i,:,:,:].squeeze(), dx, dy, delta) for i in range(batch_size)]
+            res_losses = [res_loss_fn(inputs[i,:,:,:], preds[i,:,:,:], dx, dy, delta) for i in range(batch_size)]
             res_loss = torch.tensor(res_losses, device=self.device).mean()
+            res_loss = phy_loss_coef * res_loss
             loss += res_loss
 
         return loss, fid_loss, res_loss
+
+    def train_epoch(self, epoch):
+        stats_loss = myutils.AvgMeter()
+        stats_fid_loss = myutils.AvgMeter()
+        stats_res_loss = myutils.AvgMeter()
+        last_preds = None
+
+        for iter_idx, (inputs, targets) in enumerate(self.dataloader):
+            inputs, targets = inputs.to(self.device), targets.to(self.device)
+            preds, mu, logvar = self.model(inputs)
+
+            self.optimizer.zero_grad()
+            loss, fid_loss, res_loss = self._calculate_loss(inputs, targets, preds, mu, logvar)
+            loss.backward()
+            self.optimizer.step()
+
+            stats_loss.update(loss.item())
+            stats_fid_loss.update(fid_loss.item())
+            stats_res_loss.update(res_loss.item())
+
+            if (epoch + 1) % 200 == 0:
+                last_preds = preds.detach().cpu().numpy()
+
+        avg_loss = stats_loss.avg
+        avg_fid_loss = stats_fid_loss.avg
+        avg_res_loss = stats_res_loss.avg
+
+        self._log_training_progress(epoch + 1, avg_loss, avg_fid_loss, avg_res_loss)
+        self._save_checkpoint(epoch + 1, avg_loss, avg_fid_loss, avg_res_loss)
+        if last_preds is not None:
+            self._save_predictions(epoch + 1, last_preds)
+        self._save_best_model(epoch + 1, avg_loss, avg_fid_loss, avg_res_loss)
 
     def train(self):
         for epoch in range(self.config_manager.training_config['max_epoch']):
@@ -188,7 +199,7 @@ class Trainer:
             self.scheduler.step()
 
 def main():
-    args = get_args()  # Your existing get_args function
+    args = get_args()
     config_manager = ConfigManager(args.config_path)
     trainer = Trainer(config_manager)
     trainer.train()

@@ -15,13 +15,22 @@ class AvgMeter(object):
         self.avg = 0
         self.sum = 0
         self.cnt = 0
+        self.has_nan = False  # Flag to track if any NaN is encountered
         self.max = -np.Inf
 
         if self.window > 0:
-            self.val_arr = np.zeros(self.window)
+            self.val_arr = np.full(self.window, np.nan)
             self.arr_idx = 0
 
     def update(self, val, n=1):
+        if isinstance(val, torch.Tensor):
+            if torch.isnan(val).any():
+                self.has_nan = True
+                return
+            val = val.item()
+        elif np.isnan(val):
+            self.has_nan = True
+            return
 
         self.cnt += n
         self.max = max(self.max, val)
@@ -29,11 +38,24 @@ class AvgMeter(object):
         if self.window > 0:
             self.val_arr[self.arr_idx] = val
             self.arr_idx = (self.arr_idx + 1) % self.window
-            self.avg = self.val_arr.mean()
+            if self.has_nan:
+                self.avg = float('nan')
+            else:
+                self.avg = np.mean(self.val_arr)
         else:
             self.sum += val * n
-            self.avg = self.sum / self.cnt
+            if self.has_nan:
+                self.avg = float('nan')
+            else:
+                self.avg = self.sum / self.cnt
 
+    def get_stats(self):
+        return {
+            'avg': self.avg,
+            'sum': self.sum,
+            'count': self.cnt,
+            'max': self.max
+        }
 
 def gct(f='l'):
     '''
@@ -131,28 +153,3 @@ def point_selector(mask, x_intv=1, y_intv=1):
     mask[:, :, ::y_intv, ::x_intv] = False
 
     return mask
-
-def quadratic_extrapolate_pad(input_tensor, pad_width):
-    # Assuming input_tensor is [Batch, Channels, Height, Width]
-    device = input_tensor.device  # Infer the device from the input tensor
-
-    # Prepare tensors for quadratic fitting, ensuring they're on the correct device
-    x = torch.tensor([-2, -1, 0], dtype=torch.float32, device=device)
-    A = torch.stack([x**2, x, torch.ones_like(x)], dim=1)
-
-    # Left edge extrapolation
-    left_values = input_tensor[:, :, :, :3]
-    left_coeffs = torch.linalg.lstsq(A, left_values.permute(3, 0, 1, 2)).solution
-    left_x = torch.arange(-pad_width, 0, dtype=torch.float32, device=device)
-    left_pad = (left_coeffs[0] * left_x**2 + left_coeffs[1] * left_x + left_coeffs[2]).permute(1, 2, 3, 0)
-
-    # Right edge extrapolation
-    right_values = input_tensor[:, :, :, -3:]
-    right_coeffs = torch.linalg.lstsq(A, right_values.permute(3, 0, 1, 2)).solution
-    right_x = torch.arange(1, pad_width + 1, dtype=torch.float32, device=device)
-    right_pad = (right_coeffs[0] * right_x**2 + right_coeffs[1] * right_x + right_coeffs[2]).permute(1, 2, 3, 0)
-
-    # Apply extrapolated padding
-    padded_tensor = torch.cat([left_pad, input_tensor, right_pad], dim=3)
-    
-    return padded_tensor

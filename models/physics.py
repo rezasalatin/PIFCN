@@ -2,140 +2,127 @@ import torch
 import torch.nn.functional as F
 
 ###########################################################
-# compute gradients
-def compute_gradients(tensor, dx, dy):
-    # Initialize gradient tensors with NaNs
+# Compute gradients
+def grad(tensor, dx, dy):
     gradient_x = torch.full_like(tensor, float('nan'))
     gradient_y = torch.full_like(tensor, float('nan'))
     
-    # Centered differences for interior points
     gradient_x[:, 1:-1] = (tensor[:, 2:] - tensor[:, :-2]) / (2 * dx)
     gradient_y[1:-1, :] = (tensor[2:, :] - tensor[:-2, :]) / (2 * dy)
     
-    # One-way differences for edges
-    # For x
-    gradient_x[:, 0] = (tensor[:, 1] - tensor[:, 0]) / dx  # Forward difference
-    gradient_x[:, -1] = (tensor[:, -1] - tensor[:, -2]) / dx  # Backward difference
-    # For y
-    gradient_y[0, :] = (tensor[1, :] - tensor[0, :]) / dy  # Forward difference
-    gradient_y[-1, :] = (tensor[-1, :] - tensor[-2, :]) / dy  # Backward difference
+    gradient_x[:, 0] = (tensor[:, 1] - tensor[:, 0]) / dx
+    gradient_x[:, -1] = (tensor[:, -1] - tensor[:, -2]) / dx
+    gradient_y[0, :] = (tensor[1, :] - tensor[0, :]) / dy
+    gradient_y[-1, :] = (tensor[-1] - tensor[-2, :]) / dy
 
     return gradient_x, gradient_y
 
 ###########################################################
-# compute higher order gradients
-def compute_higher_order_gradients(tensor, dx, dy):
-    # Initialize gradient tensors with NaNs
+# Compute higher order gradients
+def ho_grad(tensor, dx, dy):
     gradient_x = torch.full_like(tensor, float('nan'))
     gradient_y = torch.full_like(tensor, float('nan'))
 
-    # Fourth-order centered differences for interior points
     gradient_x[:, 2:-2] = (-tensor[:, 4:] + 8*tensor[:, 3:-1] - 8*tensor[:, 1:-3] + tensor[:, :-4]) / (12 * dx)
     gradient_y[2:-2, :] = (-tensor[4:, :] + 8*tensor[3:-1, :] - 8*tensor[1:-3, :] + tensor[:-4, :]) / (12 * dy)
 
-    # Simplified one-way differences for edges (more complex schemes could be used here too)
-    gradient_x[:, 0] = (tensor[:, 1] - tensor[:, 0]) / dx  # Forward difference
-    gradient_x[:, 1] = (tensor[:, 2] - tensor[:, 0]) / (2 * dx)  # Second order forward
-    gradient_x[:, -1] = (tensor[:, -1] - tensor[:, -2]) / dx  # Backward difference
-    gradient_x[:, -2] = (tensor[:, -1] - tensor[:, -3]) / (2 * dx)  # Second order backward
-    # For y
-    gradient_y[0, :] = (tensor[1, :] - tensor[0, :]) / dy  # Forward difference
-    gradient_y[1, :] = (tensor[2, :] - tensor[0, :]) / (2 * dy)  # Second order forward
-    gradient_y[-1, :] = (tensor[-1, :] - tensor[-2, :]) / dy  # Backward difference
-    gradient_y[-2, :] = (tensor[-1, :] - tensor[-3, :]) / (2 * dy)  # Second order backward
+    gradient_x[:, 0] = (tensor[:, 1] - tensor[:, 0]) / dx
+    gradient_x[:, 1] = (tensor[:, 2] - tensor[:, 0]) / (2 * dx)
+    gradient_x[:, -1] = (tensor[:, -1] - tensor[:, -2]) / dx
+    gradient_x[:, -2] = (tensor[:, -1] - tensor[:, -3]) / (2 * dx)
+    gradient_y[0, :] = (tensor[1, :] - tensor[0, :]) / dy
+    gradient_y[1, :] = (tensor[2, :] - tensor[0, :]) / (2 * dy)
+    gradient_y[-1, :] = (tensor[-1] - tensor[-2, :]) / dy
+    gradient_y[-2, :] = (tensor[-1] - tensor[-3, :]) / (2 * dy)
 
     return gradient_x, gradient_y
 
 ###########################################################    
-def continuity_equation_loss_huber(residuals, delta):
-    
-    # Flatten the residuals to use with huber_loss, which expects 1D inputs
+def loss_huber(residuals, delta=1.0):
     residuals_flattened = residuals.view(-1)
-    
-    # Calculate loss for the residuals
-    #loss = F.huber_loss(residuals_flattened, torch.zeros_like(residuals_flattened), delta=delta)
-    loss = F.mse_loss(residuals_flattened, torch.zeros_like(residuals_flattened))
-
+    loss = F.huber_loss(residuals_flattened, torch.zeros_like(residuals_flattened), delta=delta)
     return loss
 
 ###########################################################
-def continuity_depthintegrated(inputs, targets, dx, dy, delta=1.0):
+def continuity_h(inputs, preds, dx, dy, delta=1.0):
+    U = inputs[2, :, :].squeeze()
+    V = inputs[3, :, :].squeeze()
+    h = -1 * preds[0, :, :]  # Elevation to depth
+
+    Ux, Uy = ho_grad(U, dx, dy)
+    Vx, Vy = ho_grad(V, dx, dy)
+    Uxx, _ = ho_grad(Ux, dx, dy)
+    _, Uyy = ho_grad(Uy, dx, dy)
+    Vxx, _ = ho_grad(Vx, dx, dy)
+    _, Vyy = ho_grad(Vy, dx, dy)
+
+    hx, hy = ho_grad(h, dx, dy)
     
-    U = inputs[0, :, :].squeeze()
-    V = inputs[1, :, :].squeeze()
-    h = -targets[:, :]
-
-    #hx, hy = compute_autograd(h, x), compute_autograd(h, y)
-    hx, hy = compute_gradients(h, dx, dy)
-    Ux, _ = compute_gradients(U, dx, dy)
-    _, Vy = compute_gradients(V, dx, dy)
-
-    # Create a mask for non-NaN values
-    valid_mask = ~torch.isnan(h) & \
-            ~torch.isnan(U) & ~torch.isnan(V) & \
-            ~torch.isnan(Ux) & ~torch.isnan(Vy)
-            
-    # Apply the mask to all variables
+    valid_mask = ~torch.isnan(h)   
     U, V = U[valid_mask], V[valid_mask]
-    Ux = Ux[valid_mask]
-    Vy = Vy[valid_mask]
+    Ux, Uy = Ux[valid_mask], Uy[valid_mask]
+    Vx, Vy = Vx[valid_mask], Vy[valid_mask]
+    Uxx, Uyy = Uxx[valid_mask], Uyy[valid_mask]
+    Vxx, Vyy = Vxx[valid_mask], Vyy[valid_mask]
     h, hx, hy = h[valid_mask], hx[valid_mask], hy[valid_mask]
 
-    # Calculate the residuals for the continuity equation
-    residuals = (hx*U + Ux*h + hy*V + Vy*h)
+    nu = 1e-6  # Kinematic viscosity for saltwater in m^2/s
+    residual_cont = h * Ux + hx * U + h * Vy + hy * V
+    residual_momX = Ux * U + Uy * V - nu * (Uxx + Uyy)
+    residual_momY = Vx * U + Vy * V - nu * (Vxx + Vyy)
+    residuals = torch.cat((residual_cont, residual_momX, residual_momY))
 
-    # Continuity equation loss
-    loss = continuity_equation_loss_huber(residuals, delta)
-
+    loss = loss_huber(residuals, delta)
     return loss
 
 ###########################################################
-def continuity(inputs, dx, dy, delta=1.0):
-    
+def continuity_uv(inputs, preds, dx, dy, delta=1.0):
+    U = preds[0, :, :].squeeze()
+    V = preds[1, :, :].squeeze()
+    h = -1 * inputs[2, :, :]  # Elevation to depth
+
+    Ux, Uy = ho_grad(U, dx, dy)
+    Vx, Vy = ho_grad(V, dx, dy)
+    Uxx, _ = ho_grad(Ux, dx, dy)
+    _, Uyy = ho_grad(Uy, dx, dy)
+    Vxx, _ = ho_grad(Vx, dx, dy)
+    _, Vyy = ho_grad(Vy, dx, dy)
+
+    x_size, y_size = U.shape
+    y_values = torch.linspace(-2, 4, steps=y_size)
+    h_firstguess = y_values.expand(x_size, -1).to(U.device)
+    hx, hy = ho_grad(h_firstguess, dx, dy)
+
+    nu = 1e-6  # Kinematic viscosity for saltwater in m^2/s
+    residual_cont = h * Ux + hx * U + h * Vy + hy * V
+    residual_momX = Ux * U + Uy * V - nu * (Uxx + Uyy)
+    residual_momY = Vx * U + Vy * V - nu * (Vxx + Vyy)
+    residuals = torch.cat((residual_cont, residual_momX, residual_momY))
+
+    loss = loss_huber(residuals, delta)
+    return loss
+
+###########################################################
+def continuity_all(inputs, dx, dy, delta=1.0):
     U = inputs[0, :, :].squeeze()
     V = inputs[1, :, :].squeeze()
+    h = inputs[2, :, :].squeeze()
+    h = -h  # Elevation to depth
 
-    #hx, hy = compute_autograd(h, x), compute_autograd(h, y)
-    Ux, _ = compute_higher_order_gradients(U, dx, dy)
-    _, Vy = compute_higher_order_gradients(V, dx, dy)
+    Ux, Uy = ho_grad(U, dx, dy)
+    Vx, Vy = ho_grad(V, dx, dy)
+    hx, hy = ho_grad(h, dx, dy)
+    Uxx, _ = ho_grad(Ux, dx, dy)
+    _, Uyy = ho_grad(Uy, dx, dy)
+    Vxx, _ = ho_grad(Vx, dx, dy)
+    _, Vyy = ho_grad(Vy, dx, dy)
 
-    # Calculate the residuals for the continuity equation
-    residuals = Ux + Vy
+    nu = 1e-6  # Kinematic viscosity for saltwater in m^2/s
+    residual_cont = (hx * U + Ux * h + hy * V + Vy * h)
+    residual_momX = (Ux * U + Uy * V - nu * (Uxx + Uyy))
+    residual_momY = (Vx * U + Vy * V - nu * (Vxx + Vyy))
 
-    # Continuity equation loss
-    loss = continuity_equation_loss_huber(residuals, delta)
+    residuals = torch.cat((residual_cont, residual_momX, residual_momY))
 
-    return loss
-
-###########################################################
-def continuity_aio(inputs, dx, dy, delta=1.0):
-    
-    h = inputs[0, :, :].squeeze()
-    U = inputs[1, :, :].squeeze()
-    V = inputs[2, :, :].squeeze()
-
-    h = -h
-
-    #hx, hy = compute_autograd(h, x), compute_autograd(h, y)
-    hx, hy = compute_gradients(h, dx, dy)
-    Ux, _ = compute_gradients(U, dx, dy)
-    _, Vy = compute_gradients(V, dx, dy)
-
-    # Create a mask for non-NaN values
-    valid_mask = ~torch.isnan(h) & \
-            ~torch.isnan(U) & ~torch.isnan(V) & \
-            ~torch.isnan(Ux) & ~torch.isnan(Vy)
-            
-    # Apply the mask to all variables
-    U, V = U[valid_mask], V[valid_mask]
-    Ux = Ux[valid_mask]
-    Vy = Vy[valid_mask]
-    h, hx, hy = h[valid_mask], hx[valid_mask], hy[valid_mask]
-
-    # Calculate the residuals for the continuity equation
-    residuals = (hx*U + Ux*h + hy*V + Vy*h)
-
-    # Continuity equation loss
-    loss = continuity_equation_loss_huber(residuals, delta)
-
+    loss = loss_huber(residuals, delta)
     return loss
