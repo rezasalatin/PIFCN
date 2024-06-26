@@ -145,11 +145,13 @@ def save_scripts_in_directories(directories, destination_dir):
                 
 
 def point_selector(mask, x_intv=1, y_intv=1):
-
-    _, _, H, W = mask.shape
-    # Regular pattern selection, including boundary points
-    mask[:, :, -1, ::x_intv] = False
-    mask[:, :, ::y_intv, -1] = False
-    mask[:, :, ::y_intv, ::x_intv] = False
-
+    # Create a pattern mask with False values at the specified intervals
+    pattern = torch.ones_like(mask, dtype=torch.bool, device=mask.device)
+    pattern[:, :, -1, ::x_intv] = False
+    pattern[:, :, ::y_intv, -1] = False
+    pattern[:, :, ::y_intv, ::x_intv] = False
+    
+    # Update the original mask
+    mask = torch.where(pattern, torch.tensor(True, device=mask.device), mask)
+    
     return mask

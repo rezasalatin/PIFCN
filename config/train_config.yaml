@@ -1,23 +1,31 @@
 dataset:
   paths:
-    input: ./dataset/train_input_h_200m.mat
-    target: ./dataset/train_target_h_200m.mat
+    input: ./dataset/train_input_0624.mat
+    target: ./dataset/train_target_0624.mat
   channels:
     input: 5
     output: 1
 
 training:
-  max_epoch: 1000         # Total number of training epochs.
-  batch_size: 2           # Number of samples per batch.
-  regularization: 0.1     # Regularization factor for model training.
-  learning_rate: 0.0002   # Initial learning rate.
+  max_epoch: 2000         # Total number of training epochs.
+  batch_size: 2            # Number of samples per batch.
+  regularization: 0.1      # Regularization factor for model training.
+  learning_rate: 0.0002    # Initial learning rate.
+  fidelity: True           # Whether to use fidelity loss.
+  fid_loss_coef: 1         # Coefficient for fidelity loss.
+  physics: True            # Whether to use physics-based loss.
+  phy_loss_coef: 1         # Coefficient for physics-based loss.
+  total_variation: True
+  tv_loss_coef: 0.1
   scheduler:
-    step_size: 200        # Learning rate scheduler step size.
-    gamma: 0.8            # Learning rate decay factor.
-  fidelity: True
-  fid_loss_coef: 1
-  physics: True
-  phy_loss_coef: 10
+    type: CyclicLR         # Type of scheduler to use (CyclicLR or StepLR).
+    base_lr: 0.0000001     # Lower boundary of the learning rate cycle (for CyclicLR).
+    max_lr: 0.0001         # Upper boundary of the learning rate cycle (for CyclicLR).
+    step_size_up: 500      # Number of training iterations in the increasing half of a cycle (for CyclicLR).
+    mode: 'triangular2'    # The mode of the learning rate cycle (for CyclicLR).
+    cycle_momentum: False  # Whether to use cycle momentum (for CyclicLR).
+    step_size: 1000        # Period of learning rate decay (for StepLR).
+    gamma: 0.1             # Multiplicative factor of learning rate decay (for StepLR).
   
 environment:
   gpu: 0                  # Identifier for the GPU to use.
@@ -27,4 +35,4 @@ environment:
 physics:
   dx: 3.2
   dy: 3.2
-  huber_delta: 1.0
+  huber_delta: 0.1

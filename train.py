@@ -8,6 +8,7 @@ import numpy as np
 from scipy.io import loadmat, savemat
 import torch
 from torch.utils.data import DataLoader, TensorDataset
+import torch.nn.functional as F
 #Local Application/Library Specific Imports
 from config.read_yaml import ConfigLoader
 from models.vae_res101 import VAE
@@ -26,6 +27,9 @@ class ConfigManager:
         self.training_config = ConfigLoader(config_path, section='training').get_value()
         self.environment_config = ConfigLoader(config_path, section='environment').get_value()
         self.physics_config = ConfigLoader(config_path, section='physics').get_value()
+         # Add default values for total variation loss configuration
+        self.training_config['total_variation'] = self.training_config.get('total_variation', False)
+        self.training_config['tv_loss_coef'] = self.training_config.get('tv_loss_coef', 0.0001)
 
 class Trainer:
     def __init__(self, config_manager):
@@ -53,7 +57,7 @@ class Trainer:
     def _setup_model(self):
         input_channels = self.config_manager.dataset_config['channels']['input']
         output_channels = self.config_manager.dataset_config['channels']['output']
-        model = VAE(input_channels=input_channels, output_channels=output_channels).to(self.device)
+        model = VAE(input_channels=input_channels, output_channels=output_channels, device=self.device).to(self.device)
         model.train()
         model.apply(myutils.set_bn_eval)
         return model
@@ -64,10 +68,26 @@ class Trainer:
                                  weight_decay=self.config_manager.training_config['regularization'])
 
     def _setup_scheduler(self):
-        return torch.optim.lr_scheduler.StepLR(
-            self.optimizer,
-            step_size=self.config_manager.training_config['scheduler']['step_size'],
-            gamma=self.config_manager.training_config['scheduler']['gamma'])
+        scheduler_config = self.config_manager.training_config.get('scheduler', {})
+        scheduler_type = scheduler_config.get('type', 'StepLR')
+        
+        if scheduler_type == 'CyclicLR':
+            return torch.optim.lr_scheduler.CyclicLR(
+                self.optimizer,
+                base_lr=scheduler_config.get('base_lr', 1e-6),
+                max_lr=scheduler_config.get('max_lr', 1e-3),
+                step_size_up=scheduler_config.get('step_size_up', 200),
+                mode=scheduler_config.get('mode', 'triangular2'),
+                cycle_momentum=scheduler_config.get('cycle_momentum', False)
+            )
+        elif scheduler_type == 'StepLR':
+            return torch.optim.lr_scheduler.StepLR(
+                self.optimizer,
+                step_size=scheduler_config.get('step_size', 100),
+                gamma=scheduler_config.get('gamma', 0.9)
+            )
+        else:
+            raise ValueError(f"Unsupported scheduler type: {scheduler_type}")
 
     def _setup_dataloader(self):
         input_data = loadmat(self.config_manager.dataset_config['paths']['input'])['train_input']
@@ -96,29 +116,29 @@ class Trainer:
         scripts_to_save = glob('*.*') + glob('config/*.*', recursive=True) + glob('dataset/*.py', recursive=True) + glob('models/*.py', recursive=True) + glob('myutils/*.py', recursive=True)
         myutils.save_scripts(self.main_dir, scripts_to_save=scripts_to_save)
 
-    def _log_training_progress(self, epoch, avg_loss, avg_fid_loss, avg_res_loss):
-        if epoch % 10 == 0:
-            print(f"Epoch: {epoch}, Loss: {avg_loss:.4f}, FID Loss: {avg_fid_loss:.4f}, RES Loss: {avg_res_loss:.4f}")
+    def _log_training_progress(self, epoch, avg_loss, avg_fid_loss, avg_res_loss, avg_tv_loss, lr):
+        if epoch % 100 == 0:
+            print(f"Epoch: {epoch}, Loss: {avg_loss:.4f}, FID Loss: {avg_fid_loss:.4f}, RES Loss: {avg_res_loss:.4f}, TV Loss: {avg_tv_loss:.4f}, LR: {lr:.6f}")
 
-    def _save_checkpoint(self, epoch, avg_loss, avg_fid_loss, avg_res_loss):
+        with open(self.log_path, 'a') as log_file:
+            log_file.write(f"Epoch: {epoch}, Loss: {avg_loss:.6f}, FID Loss: {avg_fid_loss:.6f}, RES Loss: {avg_res_loss:.6f}, TV Loss: {avg_tv_loss:.6f}, LR: {lr:.6f}\n")
+
+    def _save_checkpoint(self, epoch, avg_loss, avg_fid_loss, avg_res_loss, avg_tv_loss):
         checkpoint = {
             'epoch': epoch,
             'model_state': self.model.state_dict(),
             'optimizer_state': self.optimizer.state_dict(),
             'avg_loss': avg_loss
         }
-        if epoch % 200 == 0:
+        if epoch % 10000 == 0:
             torch.save(checkpoint, os.path.join(self.model_dir, f'checkpoint_epoch_{epoch}.pth'))
             print(f'Saved model checkpoint for epoch {epoch}')
-
-        with open(self.log_path, 'a') as log_file:
-            log_file.write(f"Epoch: {epoch}, Loss: {avg_loss:.6f}, FID Loss: {avg_fid_loss:.6f}, RES Loss: {avg_res_loss:.6f}\n")
 
     def _save_predictions(self, epoch, predictions):
         savemat(os.path.join(self.model_dir, f'predictions_epoch_{epoch}.mat'), {'predictions': predictions})
         print(f'Saved predictions for epoch {epoch}')
 
-    def _save_best_model(self, epoch, avg_loss, avg_fid_loss, avg_res_loss):
+    def _save_best_model(self, epoch, avg_loss, avg_fid_loss, avg_res_loss, avg_tv_loss):
         improvement_threshold = 0.01
         if avg_loss < self.best_loss * (1 - improvement_threshold):
             self.best_loss = avg_loss
@@ -129,16 +149,18 @@ class Trainer:
                 'optimizer_state': self.optimizer.state_dict(),
                 'best_loss': self.best_loss
             }, best_model_path)
-            print(f"Epoch: {epoch}, Loss: {avg_loss:.4f}, FID Loss: {avg_fid_loss:.4f}, RES Loss: {avg_res_loss:.4f} - Best Model Saved")
+            print(f"Epoch: {epoch}, Loss: {avg_loss:.4f}, FID Loss: {avg_fid_loss:.4f}, RES Loss: {avg_res_loss:.4f}, TV Loss: {avg_tv_loss:.4f} - Best Model Saved")
 
     def _calculate_loss(self, inputs, targets, preds, mu, logvar):
         loss = 0.0
         fid_loss = torch.tensor(float('nan'), device=self.device)
         res_loss = torch.tensor(float('nan'), device=self.device)
+        tv_loss = torch.tensor(float('nan'), device=self.device)
 
-        valid_mask = ~torch.isnan(targets)
-        preds_valid = preds[valid_mask]
-        targets_valid = targets[valid_mask]
+        mask = torch.isnan(targets) 
+        mask = myutils.point_selector(mask, x_intv=1, y_intv=1)
+        preds_valid = preds[~mask]
+        targets_valid = targets[~mask]
 
         if self.config_manager.training_config['fidelity']:
             fid_loss_coef = self.config_manager.training_config['fid_loss_coef']
@@ -159,12 +181,25 @@ class Trainer:
             res_loss = phy_loss_coef * res_loss
             loss += res_loss
 
-        return loss, fid_loss, res_loss
+        if self.config_manager.training_config.get('total_variation', False):
+            tv_loss_coef = self.config_manager.training_config['tv_loss_coef']
+            tv_loss = self.total_variation_loss(preds)
+            tv_loss = tv_loss_coef * tv_loss
+            loss += tv_loss
+
+        return loss, fid_loss, res_loss, tv_loss
+    
+    def total_variation_loss(self, img):
+        batch_size, c, h, w = img.size()
+        tv_h = torch.pow(img[:,:,1:,:] - img[:,:,:-1,:], 2).sum()
+        tv_w = torch.pow(img[:,:,:,1:] - img[:,:,:,:-1], 2).sum()
+        return (tv_h + tv_w) / (batch_size * c * h * w)
 
     def train_epoch(self, epoch):
         stats_loss = myutils.AvgMeter()
         stats_fid_loss = myutils.AvgMeter()
         stats_res_loss = myutils.AvgMeter()
+        stats_tv_loss = myutils.AvgMeter()
         last_preds = None
 
         for iter_idx, (inputs, targets) in enumerate(self.dataloader):
@@ -172,31 +207,50 @@ class Trainer:
             preds, mu, logvar = self.model(inputs)
 
             self.optimizer.zero_grad()
-            loss, fid_loss, res_loss = self._calculate_loss(inputs, targets, preds, mu, logvar)
+            loss, fid_loss, res_loss, tv_loss = self._calculate_loss(inputs, targets, preds, mu, logvar)
             loss.backward()
             self.optimizer.step()
+            
+            # Step the scheduler after every batch if it's CyclicLR
+            if isinstance(self.scheduler, torch.optim.lr_scheduler.CyclicLR):
+                self.scheduler.step()
 
             stats_loss.update(loss.item())
             stats_fid_loss.update(fid_loss.item())
             stats_res_loss.update(res_loss.item())
+            stats_tv_loss.update(tv_loss.item())
 
-            if (epoch + 1) % 200 == 0:
+            if (epoch + 1) % 10000 == 0:
                 last_preds = preds.detach().cpu().numpy()
 
         avg_loss = stats_loss.avg
         avg_fid_loss = stats_fid_loss.avg
         avg_res_loss = stats_res_loss.avg
+        avg_tv_loss = stats_tv_loss.avg
 
-        self._log_training_progress(epoch + 1, avg_loss, avg_fid_loss, avg_res_loss)
-        self._save_checkpoint(epoch + 1, avg_loss, avg_fid_loss, avg_res_loss)
+        # Get current learning rate
+        current_lr = self.optimizer.param_groups[0]['lr']
+
+        self._log_training_progress(epoch + 1, avg_loss, avg_fid_loss, avg_res_loss, avg_tv_loss, current_lr)
+        self._save_checkpoint(epoch + 1, avg_loss, avg_fid_loss, avg_res_loss, avg_tv_loss)
         if last_preds is not None:
             self._save_predictions(epoch + 1, last_preds)
-        self._save_best_model(epoch + 1, avg_loss, avg_fid_loss, avg_res_loss)
+        self._save_best_model(epoch + 1, avg_loss, avg_fid_loss, avg_res_loss, avg_tv_loss)
+
+        # Step the scheduler after each epoch if it's StepLR
+        if isinstance(self.scheduler, torch.optim.lr_scheduler.StepLR):
+            self.scheduler.step()
 
     def train(self):
-        for epoch in range(self.config_manager.training_config['max_epoch']):
+        start_time = time.time()
+        num_epochs = self.config_manager.training_config['max_epoch']
+        for epoch in range(num_epochs):
             self.train_epoch(epoch)
-            self.scheduler.step()
+        end_time = time.time()
+        training_time = round(end_time - start_time)
+        with open(self.log_path, 'a') as log_file:
+            log_file.write(f"Total Training Time: {training_time} seconds\n")
+        print(f'Total Training Time: {training_time} seconds')
 
 def main():
     args = get_args()
@@ -205,8 +259,4 @@ def main():
     trainer.train()
 
 if __name__ == '__main__':
-    start_time = time.time()
     main()
-    end_time = time.time()
-    training_time = round(end_time - start_time)
-    print(f'Training time: {training_time} seconds.')

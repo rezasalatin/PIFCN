@@ -1,15 +1,15 @@
 dataset:
   paths:
-    input: ./dataset/test_input_h_400m.mat
-    target: ./dataset/test_target_h_400m.mat
+    input: ./dataset/test_input_0624.mat
+    target: ./dataset/test_target_0624.mat
   channels:
     input: 5
     output: 1
 
 test:
   batch_size: 1           # Number of samples per batch.
-  model_path: ./logs/20240521-1126/model/best.pth
-  results_dir: ./logs/20240521-1126/
+  model_path: ./logs/20240624-1950/model/best.pth
+  results_dir: ./logs/20240624-1950/
 
 environment:
   gpu: 0                  # Identifier for the GPU to use.

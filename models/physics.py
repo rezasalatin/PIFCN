@@ -49,27 +49,52 @@ def continuity_h(inputs, preds, dx, dy, delta=1.0):
     V = inputs[3, :, :].squeeze()
     h = -1 * preds[0, :, :]  # Elevation to depth
 
-    Ux, Uy = ho_grad(U, dx, dy)
-    Vx, Vy = ho_grad(V, dx, dy)
-    Uxx, _ = ho_grad(Ux, dx, dy)
-    _, Uyy = ho_grad(Uy, dx, dy)
-    Vxx, _ = ho_grad(Vx, dx, dy)
-    _, Vyy = ho_grad(Vy, dx, dy)
+    hU = h*U
+    hV = h*V
 
     hx, hy = ho_grad(h, dx, dy)
+    hUx, _ = ho_grad(hU, dx, dy)
+    _, hVy = ho_grad(hV, dx, dy)
     
-    valid_mask = ~torch.isnan(h)   
-    U, V = U[valid_mask], V[valid_mask]
-    Ux, Uy = Ux[valid_mask], Uy[valid_mask]
-    Vx, Vy = Vx[valid_mask], Vy[valid_mask]
-    Uxx, Uyy = Uxx[valid_mask], Uyy[valid_mask]
-    Vxx, Vyy = Vxx[valid_mask], Vyy[valid_mask]
-    h, hx, hy = h[valid_mask], hx[valid_mask], hy[valid_mask]
+    valid_mask = ~torch.isnan(hUx) & ~torch.isnan(hVy) 
+    hUx, hVy = hUx[valid_mask], hVy[valid_mask]
 
-    nu = 1e-6  # Kinematic viscosity for saltwater in m^2/s
-    residual_cont = h * Ux + hx * U + h * Vy + hy * V
-    residual_momX = Ux * U + Uy * V - nu * (Uxx + Uyy)
-    residual_momY = Vx * U + Vy * V - nu * (Vxx + Vyy)
+    residuals = hUx + hVy
+
+    loss = loss_huber(residuals, delta)
+    return loss
+
+###########################################################
+def continuity_h2(inputs, preds, dx, dy, delta=1.0):
+    U = inputs[2, :, :].squeeze()
+    V = inputs[3, :, :].squeeze()
+    h = -1 * preds[0, :, :]  # Elevation to depth
+
+    hU = h*U
+    hV = h*V
+    hUU = hU*U
+    hUV = hU*V
+    hVV = hV*V
+
+    hx, hy = ho_grad(h, dx, dy)
+    hUx, hUy = ho_grad(hU, dx, dy)
+    hVx, hVy = ho_grad(hV, dx, dy)
+    hUUx, _ = ho_grad(hUU, dx, dy)
+    hUVx, hUVy = ho_grad(hUV, dx, dy)
+    _, hVVy = ho_grad(hVV, dx, dy)
+    
+    valid_mask = ~torch.isnan(h) & ~torch.isnan(hx) & ~torch.isnan(hy) 
+    h, hx, hy = h[valid_mask], hx[valid_mask], hy[valid_mask]
+    U, V = U[valid_mask], V[valid_mask]
+    hUx, hUy = hUx[valid_mask], hUy[valid_mask]
+    hVx, hVy = hVx[valid_mask], hVy[valid_mask]
+    hUUx = hUUx[valid_mask]
+    hUVx, hUVy = hUVx[valid_mask], hUVy[valid_mask]
+    hVVy = hVVy[valid_mask]
+
+    residual_cont = hUx + hVy
+    residual_momX = hUUx + hUVy + 9.81*h*hx
+    residual_momY = hUVx + hVVy + 9.81*h*hy
     residuals = torch.cat((residual_cont, residual_momX, residual_momY))
 
     loss = loss_huber(residuals, delta)
@@ -79,7 +104,9 @@ def continuity_h(inputs, preds, dx, dy, delta=1.0):
 def continuity_uv(inputs, preds, dx, dy, delta=1.0):
     U = preds[0, :, :].squeeze()
     V = preds[1, :, :].squeeze()
-    h = -1 * inputs[2, :, :]  # Elevation to depth
+    x_size, y_size = U.shape
+    y_values = torch.linspace(-2, 4, steps=y_size)
+    h = y_values.expand(x_size, -1).to(U.device)
 
     Ux, Uy = ho_grad(U, dx, dy)
     Vx, Vy = ho_grad(V, dx, dy)
@@ -87,41 +114,12 @@ def continuity_uv(inputs, preds, dx, dy, delta=1.0):
     _, Uyy = ho_grad(Uy, dx, dy)
     Vxx, _ = ho_grad(Vx, dx, dy)
     _, Vyy = ho_grad(Vy, dx, dy)
-
-    x_size, y_size = U.shape
-    y_values = torch.linspace(-2, 4, steps=y_size)
-    h_firstguess = y_values.expand(x_size, -1).to(U.device)
-    hx, hy = ho_grad(h_firstguess, dx, dy)
+    hx, hy = ho_grad(h, dx, dy)
 
     nu = 1e-6  # Kinematic viscosity for saltwater in m^2/s
     residual_cont = h * Ux + hx * U + h * Vy + hy * V
     residual_momX = Ux * U + Uy * V - nu * (Uxx + Uyy)
     residual_momY = Vx * U + Vy * V - nu * (Vxx + Vyy)
-    residuals = torch.cat((residual_cont, residual_momX, residual_momY))
-
-    loss = loss_huber(residuals, delta)
-    return loss
-
-###########################################################
-def continuity_all(inputs, dx, dy, delta=1.0):
-    U = inputs[0, :, :].squeeze()
-    V = inputs[1, :, :].squeeze()
-    h = inputs[2, :, :].squeeze()
-    h = -h  # Elevation to depth
-
-    Ux, Uy = ho_grad(U, dx, dy)
-    Vx, Vy = ho_grad(V, dx, dy)
-    hx, hy = ho_grad(h, dx, dy)
-    Uxx, _ = ho_grad(Ux, dx, dy)
-    _, Uyy = ho_grad(Uy, dx, dy)
-    Vxx, _ = ho_grad(Vx, dx, dy)
-    _, Vyy = ho_grad(Vy, dx, dy)
-
-    nu = 1e-6  # Kinematic viscosity for saltwater in m^2/s
-    residual_cont = (hx * U + Ux * h + hy * V + Vy * h)
-    residual_momX = (Ux * U + Uy * V - nu * (Uxx + Uyy))
-    residual_momY = (Vx * U + Vy * V - nu * (Vxx + Vyy))
-
     residuals = torch.cat((residual_cont, residual_momX, residual_momY))
 
     loss = loss_huber(residuals, delta)
