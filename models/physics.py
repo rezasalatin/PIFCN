@@ -52,7 +52,6 @@ def continuity_h(inputs, preds, dx, dy, delta=1.0):
     hU = h*U
     hV = h*V
 
-    hx, hy = ho_grad(h, dx, dy)
     hUx, _ = ho_grad(hU, dx, dy)
     _, hVy = ho_grad(hV, dx, dy)
     
@@ -77,17 +76,16 @@ def continuity_h2(inputs, preds, dx, dy, delta=1.0):
     hVV = hV*V
 
     hx, hy = ho_grad(h, dx, dy)
-    hUx, hUy = ho_grad(hU, dx, dy)
-    hVx, hVy = ho_grad(hV, dx, dy)
+    hUx, _ = ho_grad(hU, dx, dy)
+    _, hVy = ho_grad(hV, dx, dy)
     hUUx, _ = ho_grad(hUU, dx, dy)
     hUVx, hUVy = ho_grad(hUV, dx, dy)
     _, hVVy = ho_grad(hVV, dx, dy)
     
-    valid_mask = ~torch.isnan(h) & ~torch.isnan(hx) & ~torch.isnan(hy) 
-    h, hx, hy = h[valid_mask], hx[valid_mask], hy[valid_mask]
-    U, V = U[valid_mask], V[valid_mask]
-    hUx, hUy = hUx[valid_mask], hUy[valid_mask]
-    hVx, hVy = hVx[valid_mask], hVy[valid_mask]
+    valid_mask = ~torch.isnan(hx) & ~torch.isnan(hy) & ~torch.isnan(hUx) & ~torch.isnan(hVy) & ~torch.isnan(hUUx) & ~torch.isnan(hUVy) & ~torch.isnan(hUVx) & ~torch.isnan(hVVy)
+    h = h[valid_mask]
+    hx, hy = hx[valid_mask], hy[valid_mask]
+    hUx, hVy = hUx[valid_mask], hVy[valid_mask]
     hUUx = hUUx[valid_mask]
     hUVx, hUVy = hUVx[valid_mask], hUVy[valid_mask]
     hVVy = hVVy[valid_mask]

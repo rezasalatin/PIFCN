@@ -12,7 +12,7 @@ import torch.nn.functional as F
 #Local Application/Library Specific Imports
 from config.read_yaml import ConfigLoader
 from models.vae_res101 import VAE
-from models.physics import continuity_h as res_loss_fn
+from models.physics import continuity_h2 as res_loss_fn
 import myutils
 
 def get_args():
@@ -138,7 +138,7 @@ class Trainer:
         savemat(os.path.join(self.model_dir, f'predictions_epoch_{epoch}.mat'), {'predictions': predictions})
         print(f'Saved predictions for epoch {epoch}')
 
-    def _save_best_model(self, epoch, avg_loss, avg_fid_loss, avg_res_loss, avg_tv_loss):
+    def _save_best_model(self, epoch, avg_loss, avg_fid_loss, avg_res_loss, avg_tv_loss, lr):
         improvement_threshold = 0.01
         if avg_loss < self.best_loss * (1 - improvement_threshold):
             self.best_loss = avg_loss
@@ -149,7 +149,7 @@ class Trainer:
                 'optimizer_state': self.optimizer.state_dict(),
                 'best_loss': self.best_loss
             }, best_model_path)
-            print(f"Epoch: {epoch}, Loss: {avg_loss:.4f}, FID Loss: {avg_fid_loss:.4f}, RES Loss: {avg_res_loss:.4f}, TV Loss: {avg_tv_loss:.4f} - Best Model Saved")
+            print(f"Epoch: {epoch}, Loss: {avg_loss:.4f}, FID: {avg_fid_loss:.4f}, RES: {avg_res_loss:.4f}, TV: {avg_tv_loss:.4f}, LR: {lr:.8f} - Best Model Saved")
 
     def _calculate_loss(self, inputs, targets, preds, mu, logvar):
         loss = 0.0
@@ -235,7 +235,7 @@ class Trainer:
         self._save_checkpoint(epoch + 1, avg_loss, avg_fid_loss, avg_res_loss, avg_tv_loss)
         if last_preds is not None:
             self._save_predictions(epoch + 1, last_preds)
-        self._save_best_model(epoch + 1, avg_loss, avg_fid_loss, avg_res_loss, avg_tv_loss)
+        self._save_best_model(epoch + 1, avg_loss, avg_fid_loss, avg_res_loss, avg_tv_loss, current_lr)
 
         # Step the scheduler after each epoch if it's StepLR
         if isinstance(self.scheduler, torch.optim.lr_scheduler.StepLR):
