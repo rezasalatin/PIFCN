@@ -22,13 +22,16 @@ def add_noise(U, V, noise_std=0.01):
     return U_noisy, V_noisy # no noise for measured h
 
 def random_crop_and_resize(U, V, h, crop_size, output_size):
-    i, j, h, w = transforms.RandomCrop.get_params(U, output_size=(crop_size, crop_size))
-    U_cropped = TF.crop(U, i, j, h, w)
-    V_cropped = TF.crop(V, i, j, h, w)
-    h_cropped = TF.crop(h, i, j, h, w)
-    #U_resized = TF.resize(U_cropped, output_size)
-    #V_resized = TF.resize(V_cropped, output_size)
-    #h_resized = TF.resize(h_cropped, output_size)
+    # Ensure crop size is not larger than the input dimensions
+    h, w = U.shape[1:3]
+    crop_height = min(crop_size, h)
+    crop_width = min(crop_size, w)
+    # Generate random crop parameters with adjusted crop size
+    i, j, h_crop, w_crop = transforms.RandomCrop.get_params(U, output_size=(crop_height, crop_width))
+    # Apply cropping
+    U_cropped = TF.crop(U, i, j, h_crop, w_crop)
+    V_cropped = TF.crop(V, i, j, h_crop, w_crop)
+    h_cropped = TF.crop(h, i, j, h_crop, w_crop)
     return U_cropped, V_cropped, h_cropped
 
 def flip_flow(U, V, h, horizontal=True):
