@@ -212,8 +212,8 @@ class Trainer:
             if self.config_manager.training_config.get("augmentation", True):
                 U, V, h = inputs[:, 0, :, :], inputs[:, 1, :, :], targets[:, 0, :, :]
                 U, V, h = augment_flow(U, V, h, output_size=(inputs.shape[2], inputs.shape[3]))
-                inputs = torch.stack((U, V), dim=1)  # Re-stack the augmented U and V into inputs
-                targets = torch.stack((h), dim=1) # Re-stack the augmented h into inputs
+                inputs = torch.stack((U, V), dim=1)
+                targets = h.unsqueeze(1)
 
             preds, mu, logvar = self.model(inputs)
 
