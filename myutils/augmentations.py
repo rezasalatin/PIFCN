@@ -23,9 +23,9 @@ def add_noise(U, V, noise_std=0.01):
 
 def random_crop_and_resize(U, V, h, crop_size, output_size):
     # Ensure crop size is not larger than the input dimensions
-    h, w = U.shape[1:3]
-    crop_height = min(crop_size, h)
-    crop_width = min(crop_size, w)
+    height, width = U.shape[1:3]
+    crop_height = min(crop_size, height)
+    crop_width = min(crop_size, width)
     # Generate random crop parameters with adjusted crop size
     i, j, h_crop, w_crop = transforms.RandomCrop.get_params(U, output_size=(crop_height, crop_width))
     # Apply cropping
