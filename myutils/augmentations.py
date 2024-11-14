@@ -65,7 +65,7 @@ def augment_flow(U, V, h, output_size):
     U, V, h = rotate_flow(U, V, h, angle=angle)
     
     if random.random() < 0.5:
-        U, V, h = add_noise(U, V, h, noise_std=0.01)
+        U, V, h = add_noise(U, V, noise_std=0.01)
 
     crop_size = random.randint(int(0.8 * output_size[0]), output_size[0])
     U, V, h = random_crop_and_resize(U, V, h, crop_size=crop_size, output_size=output_size)
