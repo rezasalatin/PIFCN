@@ -112,8 +112,8 @@ class Encoder(nn.Module):
         self.res4 = resnet.layer3.to(device)
         self.res5 = resnet.layer4.to(device)
 
-        max_vals = torch.tensor([240.0, 201.6, 0.528, 1.870, 6.25]).to(device)
-        min_vals = torch.tensor([0.0, 0.0, -0.718, -1.589, -6.25]).to(device)
+        max_vals = torch.tensor([0.528, 1.870]).to(device)
+        min_vals = torch.tensor([-0.718, -1.589]).to(device)
         self.register_buffer('max_values', max_vals[:input_channels].view(1, input_channels, 1, 1))
         self.register_buffer('min_values', min_vals[:input_channels].view(1, input_channels, 1, 1))
 
