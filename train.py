@@ -1,19 +1,22 @@
-#Standard Library Imports
+# Standard Library Imports
 import os
 import time
 import argparse
 from glob import glob
-#Third-Party Imports
+
+# Third-Party Imports
 import numpy as np
 from scipy.io import loadmat, savemat
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 import torch.nn.functional as F
-#Local Application/Library Specific Imports
+
+# Local Application/Library Specific Imports
 from config.read_yaml import ConfigLoader
 from models.vae_res101 import VAE
-from models.physics import continuity_h2 as res_loss_fn
+from models.physics import simplified_swe as res_loss_fn
 import myutils
+from myutils.augmentations import augment_flow
 
 def get_args():
     parser = argparse.ArgumentParser(description='Train a VAE model.')
@@ -204,6 +207,14 @@ class Trainer:
 
         for iter_idx, (inputs, targets) in enumerate(self.dataloader):
             inputs, targets = inputs.to(self.device), targets.to(self.device)
+
+            # Apply augmentation only during training
+            if self.config_manager.training_config.get("augmentation", True):
+                U, V, h = inputs[:, 0, :, :], inputs[:, 1, :, :], targets[:, 0, :, :]
+                U, V, h = augment_flow(U, V, h, output_size=(inputs.shape[2], inputs.shape[3]))
+                inputs = torch.stack((U, V), dim=1)  # Re-stack the augmented U and V into inputs
+                targets = torch.stack((h), dim=1) # Re-stack the augmented h into inputs
+
             preds, mu, logvar = self.model(inputs)
 
             self.optimizer.zero_grad()

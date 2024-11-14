@@ -44,29 +44,9 @@ def loss_huber(residuals, delta=1.0):
     return loss
 
 ###########################################################
-def continuity_h(inputs, preds, dx, dy, delta=1.0):
-    U = inputs[2, :, :].squeeze()
-    V = inputs[3, :, :].squeeze()
-    h = -1 * preds[0, :, :]  # Elevation to depth
-
-    hU = h*U
-    hV = h*V
-
-    hUx, _ = ho_grad(hU, dx, dy)
-    _, hVy = ho_grad(hV, dx, dy)
-    
-    valid_mask = ~torch.isnan(hUx) & ~torch.isnan(hVy) 
-    hUx, hVy = hUx[valid_mask], hVy[valid_mask]
-
-    residuals = hUx + hVy
-
-    loss = loss_huber(residuals, delta)
-    return loss
-
-###########################################################
-def continuity_h2(inputs, preds, dx, dy, delta=1.0):
-    U = inputs[2, :, :].squeeze()
-    V = inputs[3, :, :].squeeze()
+def simplified_swe(inputs, preds, dx, dy, delta=1.0):
+    U = inputs[0, :, :].squeeze()
+    V = inputs[1, :, :].squeeze()
     h = -1 * preds[0, :, :]  # Elevation to depth
 
     hU = h*U
@@ -93,31 +73,6 @@ def continuity_h2(inputs, preds, dx, dy, delta=1.0):
     residual_cont = hUx + hVy
     residual_momX = hUUx + hUVy + 9.81*h*hx
     residual_momY = hUVx + hVVy + 9.81*h*hy
-    residuals = torch.cat((residual_cont, residual_momX, residual_momY))
-
-    loss = loss_huber(residuals, delta)
-    return loss
-
-###########################################################
-def continuity_uv(inputs, preds, dx, dy, delta=1.0):
-    U = preds[0, :, :].squeeze()
-    V = preds[1, :, :].squeeze()
-    x_size, y_size = U.shape
-    y_values = torch.linspace(-2, 4, steps=y_size)
-    h = y_values.expand(x_size, -1).to(U.device)
-
-    Ux, Uy = ho_grad(U, dx, dy)
-    Vx, Vy = ho_grad(V, dx, dy)
-    Uxx, _ = ho_grad(Ux, dx, dy)
-    _, Uyy = ho_grad(Uy, dx, dy)
-    Vxx, _ = ho_grad(Vx, dx, dy)
-    _, Vyy = ho_grad(Vy, dx, dy)
-    hx, hy = ho_grad(h, dx, dy)
-
-    nu = 1e-6  # Kinematic viscosity for saltwater in m^2/s
-    residual_cont = h * Ux + hx * U + h * Vy + hy * V
-    residual_momX = Ux * U + Uy * V - nu * (Uxx + Uyy)
-    residual_momY = Vx * U + Vy * V - nu * (Vxx + Vyy)
     residuals = torch.cat((residual_cont, residual_momX, residual_momY))
 
     loss = loss_huber(residuals, delta)
