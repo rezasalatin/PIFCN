@@ -16,8 +16,8 @@ def rotate_flow(U, V, h, angle):
     return U_rot, V_rot, h_rot
 
 def add_noise(U, V, noise_std=0.01):
-    noise_U = torch.randn(U.size()) * noise_std
-    noise_V = torch.randn(V.size()) * noise_std
+    noise_U = torch.randn(U.size(), device=U.device) * noise_std
+    noise_V = torch.randn(V.size(), device=V.device) * noise_std
     U_noisy, V_noisy = U + noise_U, V + noise_V
     return U_noisy, V_noisy # no noise for measured h
 
