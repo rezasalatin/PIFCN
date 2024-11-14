@@ -1,6 +1,7 @@
 import random
 import torch
 import torch.nn.functional as F
+from torchvision import transforms
 import torchvision.transforms.functional as TF
 
 def rotate_flow(U, V, h, angle):
@@ -21,7 +22,7 @@ def add_noise(U, V, noise_std=0.01):
     return U_noisy, V_noisy # no noise for measured h
 
 def random_crop_and_resize(U, V, h, crop_size, output_size):
-    i, j, h, w = TF.RandomCrop.get_params(U, output_size=(crop_size, crop_size))
+    i, j, h, w = transforms.RandomCrop.get_params(U, output_size=(crop_size, crop_size))
     U_cropped = TF.crop(U, i, j, h, w)
     V_cropped = TF.crop(V, i, j, h, w)
     h_cropped = TF.crop(h, i, j, h, w)
