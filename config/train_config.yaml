@@ -1,9 +1,9 @@
 dataset:
   paths:
-    input: ./dataset/1107/train_mike_input_C1.mat
-    target: ./dataset/1107/train_mike_target_C1.mat
+    input: ./dataset/readyToTrainData/train_input_all.mat
+    target: ./dataset/readyToTrainData/train_target_all.mat
   channels:
-    input: 5
+    input: 2
     output: 1
 
 training:
@@ -12,16 +12,16 @@ training:
   regularization: 0.1      # Regularization factor for model training.
   learning_rate: 0.0002    # Initial learning rate.
   fidelity: True           # Whether to use fidelity loss.
-  fid_loss_coef: 0.0001    # Coefficient for fidelity loss.
-  physics: True            # Whether to use physics-based loss.
+  fid_loss_coef: 1    # Coefficient for fidelity loss.
+  physics: False            # Whether to use physics-based loss.
   phy_loss_coef: 1 #100000         # Coefficient for physics-based loss.
   total_variation: True
-  tv_loss_coef: 0.5
+  tv_loss_coef: 0.1
   scheduler:
     type: CyclicLR         # Type of scheduler to use (CyclicLR or StepLR).
-    base_lr: 0.0000001     # Lower boundary of the learning rate cycle (for CyclicLR).
+    base_lr: 0.000001     # Lower boundary of the learning rate cycle (for CyclicLR).
     max_lr: 0.0001         # Upper boundary of the learning rate cycle (for CyclicLR).
-    step_size_up: 5000     # Number of training iterations in the increasing half of a cycle (for CyclicLR).
+    step_size_up: 10000     # Number of training iterations in the increasing half of a cycle (for CyclicLR).
     mode: 'triangular2'    # The mode of the learning rate cycle (for CyclicLR).
     cycle_momentum: False  # Whether to use cycle momentum (for CyclicLR).
     step_size: 1000        # Period of learning rate decay (for StepLR).
@@ -33,6 +33,6 @@ environment:
   logging: True           # Enable logging of training process.
 
 physics:
-  dx: 5.0
-  dy: 5.0
+  dx: 3.2
+  dy: 3.2
   huber_delta: 0.1
